@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* ═══ Dashboard Drag-and-Drop Animations ═══ */
+
+/* Toast slides up from bottom */
+@keyframes slide-up {
+  0% { transform: translateY(100px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.animate-slide-up {
+  animation: slide-up 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Keyboard DnD hint slides down from top */
+@keyframes slide-down {
+  0% { transform: translateX(-50%) translateY(-50px); opacity: 0; }
+  100% { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+.animate-slide-down {
+  animation: slide-down 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Card lands in new column with bounce */
+@keyframes drop-in {
+  0% { transform: scale(0.85) translateY(-8px); opacity: 0.5; }
+  50% { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.animate-drop-in {
+  animation: drop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Context menu pops in */
+@keyframes scale-in {
+  0% { transform: scale(0.9); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-scale-in {
+  animation: scale-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Card description expands */
+@keyframes expand {
+  0% { max-height: 0; opacity: 0; }
+  100% { max-height: 200px; opacity: 1; }
+}
+.animate-expand {
+  animation: expand 0.25s ease-out forwards;
+  overflow: hidden;
+}
+
+/* Slow pulse for drop zone placeholder */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+.animate-pulse-slow {
+  animation: pulse-slow 1.5s ease-in-out infinite;
+}

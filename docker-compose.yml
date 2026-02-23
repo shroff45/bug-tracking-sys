@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  bugtracker-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bugtracker-ai
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost/" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "app.name=BugTracker AI"
+      - "app.description=Smart Bug Tracking with Deep Learning"
+      - "app.version=2.0.0"
