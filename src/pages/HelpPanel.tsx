@@ -1,11 +1,29 @@
-import { useState } from 'react';
-import { useAppContext } from '../store';
+/**
+ * src/pages/HelpPanel.tsx
+ * 
+ * CORE VIEW: Global Help & Documentation Overlay
+ * 
+ * Features:
+ * 1. Quick Start Guide for onboarding new users.
+ * 2. Keyboard Shortcuts reference map.
+ * 3. FAQ describing the AI/ML features theoretically underpinning the app.
+ * 
+ * Why this code/type is used:
+ * - useState: Manages local tab state ('guide', 'shortcuts', 'faq').
+ * - Fixed Positioning: Renders as a full-screen overlay (`z-50`) modal, blurring the background to maintain context without losing the user's place in the app.
+ * - Map functions: Iterates cleanly over structured arrays to generate lists/accordions instead of hard-coding repetitive markup.
+ */
+import { useState } from 'react'; // React form state hook
+import { useAppContext } from '../store'; // Global identity provider access
 
+// Main functional component. Receives an explicit `onClose` callback to dismiss itself.
 export default function HelpPanel({ onClose }: { onClose: () => void }) {
+    // Local state tracking the currently active documentation tab
     const [activeTab, setActiveTab] = useState<'guide' | 'shortcuts' | 'faq'>('guide');
 
     const { currentUser } = useAppContext();
 
+    // Structural definitions for the tab buttons
     const tabs = [
         { key: 'guide' as const, label: '📖 Quick Start', },
         { key: 'shortcuts' as const, label: '⌨️ Shortcuts', },
@@ -13,24 +31,29 @@ export default function HelpPanel({ onClose }: { onClose: () => void }) {
     ];
 
     return (
+        // Main overlay backdrop; clicking outside the panel triggers onClose
         <div className="fixed inset-0 bg-black/60 z-50 flex justify-end" onClick={onClose}>
+            {/* Slide-in panel container; stops click propagation so clicking inside doesn't close it */}
             <div className="w-full max-w-md bg-slate-900 border-l border-white/10 shadow-2xl overflow-y-auto animate-slide-in"
                 onClick={e => e.stopPropagation()} role="dialog" aria-label="Help Panel" aria-modal="true">
-                {/* Header */}
+
+                {/* Fixed Header Section */}
                 <div className="sticky top-0 bg-slate-900/95 backdrop-blur-xl border-b border-white/5 p-4 flex items-center justify-between z-10">
                     <div className="flex items-center gap-2">
                         <span className="text-xl">📚</span>
                         <h2 className="text-lg font-bold text-white">Help & Documentation</h2>
                     </div>
+                    {/* Close button explicitly triggering the passed prop */}
                     <button onClick={onClose} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition" aria-label="Close help panel">
                         ✕
                     </button>
                 </div>
 
-                {/* Tabs */}
+                {/* Tab Navigation Row */}
                 <div className="flex border-b border-white/5">
                     {tabs.map(t => (
                         <button key={t.key} onClick={() => setActiveTab(t.key)}
+                            // Dynamic styling based on currently active tab state
                             className={`flex-1 px-4 py-3 text-xs font-medium transition ${activeTab === t.key ? 'text-purple-400 border-b-2 border-purple-500 bg-purple-500/5' : 'text-slate-500 hover:text-slate-300'}`}
                             aria-selected={activeTab === t.key} role="tab">
                             {t.label}
@@ -38,7 +61,9 @@ export default function HelpPanel({ onClose }: { onClose: () => void }) {
                     ))}
                 </div>
 
+                {/* Tab Content Container */}
                 <div className="p-4 space-y-4" role="tabpanel">
+                    {/* TAB: Guide */}
                     {activeTab === 'guide' && (
                         <>
                             <div className="bg-gradient-to-br from-purple-500/10 to-indigo-500/10 rounded-xl border border-purple-500/20 p-4">
@@ -69,6 +94,7 @@ export default function HelpPanel({ onClose }: { onClose: () => void }) {
                         </>
                     )}
 
+                    {/* TAB: Shortcuts */}
                     {activeTab === 'shortcuts' && (
                         <>
                             <p className="text-xs text-slate-500 mb-2">Keyboard shortcuts for power users:</p>
@@ -93,6 +119,7 @@ export default function HelpPanel({ onClose }: { onClose: () => void }) {
                         </>
                     )}
 
+                    {/* TAB: Frequently Asked Questions */}
                     {activeTab === 'faq' && (
                         <>
                             {[

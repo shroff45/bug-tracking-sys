@@ -9,6 +9,7 @@ interface DetectedBug {
     title: string;
     description: string;
     severity: string;
+    publicImpact: string;
     projectId: string;
 }
 
@@ -44,7 +45,7 @@ export async function cloneAndAnalyzeRepo(repoUrl: string, projectId: string): P
         !f.toLowerCase().includes('test') &&
         !f.toLowerCase().includes('config') &&
         !f.toLowerCase().includes('.json')
-    ).slice(0, 10);
+    );
     const allBugs: DetectedBug[] = [];
 
     // 3. Send to LLM
@@ -81,6 +82,7 @@ export async function cloneAndAnalyzeRepo(repoUrl: string, projectId: string): P
             title: 'General Code Review Pending',
             description: `Analyzed ${filesToProcess.length} files but did not find any immediate critical issues. A wider architectural review may be beneficial.`,
             severity: 'low',
+            publicImpact: "Requires manual review",
             projectId
         });
     }
@@ -94,11 +96,12 @@ const bugSchema: Schema = {
         type: Type.OBJECT,
         properties: {
             title: { type: Type.STRING, description: "A concise title of the bug." },
-            description: { type: Type.STRING, description: "Detailed description of the bug, including what is wrong and why." },
+            description: { type: Type.STRING, description: "A highly detailed, professional analysis of the bug. Explain the technical flaw, but heavily emphasize why it matters to the product, the market, or end-user security." },
             severity: { type: Type.STRING, description: "The severity of the bug strictly constrained to: 'critical', 'high', 'medium', 'low'." },
+            publicImpact: { type: Type.STRING, description: "A concise statement (1-2 sentences) categorizing the impact this bug has on the general public, target audience, or market viability." },
             proposedFix: { type: Type.STRING, description: "A code snippet or concise explanation of how to fix this bug. Required if severity is 'low', optional otherwise." }
         },
-        required: ["title", "description", "severity"]
+        required: ["title", "description", "severity", "publicImpact"]
     }
 };
 
@@ -111,10 +114,14 @@ async function analyzeFileWithGemini(filename: string, content: string, projectI
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const prompt = `
-    You are an expert software engineer and security researcher.
-    Analyze the following source code file named "${filename}".
-    Identify any bugs, logic errors, potential runtime exceptions, lack of error handling, or security vulnerabilities (like SQL injection, XSS, etc).
-    Do NOT report code formatting or style issues as bugs. Only report actual functional defects or security risks.
+    You are a Senior Principal Software Engineer, an elite Cybersecurity Auditor, and a highly analytical Technical Product Manager.
+    Your task is to perform a DEEP market and technical analysis of the following source code file named "${filename}".
+    This code belongs to a GitHub-level, enterprise-grade project.
+
+    Instructions:
+    1. Identify deep structural flaws, logic errors, product-market fit logic gaps, edge cases, and security vulnerabilities (e.g., IDOR, SQLi, XSS, unhandled promises, race conditions).
+    2. Do NOT report trivial code formatting or style issues. Look for bugs that could cause massive user frustration, data loss, or market failure.
+    3. For every bug you find, critically assess its "public impact": How does this affect the general public or end-users using this software?
 
     Code:
     \`\`\`
@@ -124,12 +131,12 @@ async function analyzeFileWithGemini(filename: string, content: string, projectI
 
     try {
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-2.5-pro', // Upgrading to Pro for deeper analytical and logic capabilities
             contents: prompt,
             config: {
                 responseMimeType: 'application/json',
                 responseSchema: bugSchema,
-                temperature: 0.2, // Low temperature for more analytical/factual responses
+                temperature: 0.1, // Analytical & factual
             }
         });
 
@@ -139,8 +146,8 @@ async function analyzeFileWithGemini(filename: string, content: string, projectI
 
         const parsedBugs = JSON.parse(textResponse);
 
-        return parsedBugs.map((b: { title: string; description: string; severity: string; proposedFix?: string }) => {
-            let finalDescription = `File: ${filename}\n\n${b.description}`;
+        return parsedBugs.map((b: { title: string; description: string; severity: string; publicImpact: string; proposedFix?: string }) => {
+            let finalDescription = `File: ${filename}\n\n**Deep Analysis:**\n${b.description}`;
             if (b.proposedFix) {
                 finalDescription += `\n\n**AI Proposed Fix:**\n\`\`\`\n${b.proposedFix}\n\`\`\``;
             }
@@ -149,6 +156,7 @@ async function analyzeFileWithGemini(filename: string, content: string, projectI
                 title: b.title,
                 description: finalDescription,
                 severity: b.severity,
+                publicImpact: b.publicImpact,
                 projectId,
             };
         });

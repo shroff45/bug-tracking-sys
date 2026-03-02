@@ -1,22 +1,47 @@
-import { useMemo } from 'react';
-import { useAppContext } from '../store';
+/**
+ * src/pages/Analytics.tsx
+ * 
+ * CORE VIEW: The Analytics Dashboard
+ * 
+ * Features:
+ * 1. Displays project health metrics including bug severity, status breakdown, and trends.
+ * 2. Visualizes team workload and AI prediction accuracy.
+ * 3. Uses Recharts for responsive, interactive charting.
+ * 
+ * Why this code/type is used:
+ * - useMemo: Used heavily to calculate aggregrate data only when dependencies change, optimizing performance.
+ * - useAppContext: Used to access global state for bugs, users, and projects to calculate metrics.
+ * - Recharts components (PieChart, BarChart, LineChart): Used for robust, declarative charting in React.
+ */
+import { useMemo } from 'react'; // Hook for memoizing expensive calculations
+import { useAppContext } from '../store'; // Hook to access global context
+// Import necessary chart components from recharts library
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend } from 'recharts';
 
+// Colors mapped to bug severities for chart rendering
 const SEVERITY_COLORS = { critical: '#ef4444', high: '#f97316', medium: '#eab308', low: '#22c55e' };
+// Colors mapped to bug statuses for chart rendering
 const STATUS_COLORS = { new: '#3b82f6', open: '#eab308', 'in-progress': '#a855f7', resolved: '#22c55e', closed: '#64748b' };
 
+// Analytics component displays various charts based on application data
 export default function Analytics() {
+  // Access global state elements needed for analytics
   const { bugs, users, projects } = useAppContext();
 
+  // Memoized data for the Severity Distribution Pie Chart
   const severityData = useMemo(() => {
+    // Initialize counters for each severity level
     const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
-    bugs.forEach(b => counts[b.severity]++);
+    bugs.forEach(b => counts[b.severity]++); // Increment count based on bug severity
+    // Convert object back to array form required by Recharts
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [bugs]);
+  }, [bugs]); // Re-calculate when 'bugs' array changes
 
+  // Memoized data for the Status Breakdown Bar Chart
   const statusData = useMemo(() => {
+    // Initialize counters for each status type
     const counts: Record<string, number> = { new: 0, open: 0, 'in-progress': 0, resolved: 0, closed: 0 };
-    bugs.forEach(b => counts[b.status]++);
+    bugs.forEach(b => counts[b.status]++); // Increment count based on bug status
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
   }, [bugs]);
 
@@ -85,25 +110,25 @@ export default function Analytics() {
       <div className="flex items-center gap-3 mb-2">
         <span className="text-3xl">📈</span>
         <div>
-          <h1 className="text-2xl font-bold text-white">Analytics Dashboard</h1>
-          <p className="text-sm text-slate-400">Project health monitoring and AI insights</p>
+          <h1 className="text-2xl font-bold text-foreground">Analytics Dashboard</h1>
+          <p className="text-sm text-muted-foreground">Project health monitoring and AI insights</p>
         </div>
       </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Bugs', value: bugs.length, icon: '🐛', color: 'from-purple-500/20 to-indigo-500/20 border-purple-500/20' },
-          { label: 'AI Accuracy', value: `${aiStats.accuracy}%`, icon: '🧠', color: 'from-blue-500/20 to-cyan-500/20 border-blue-500/20' },
-          { label: 'Avg Resolution', value: avgResolution, icon: '⏱️', color: 'from-green-500/20 to-emerald-500/20 border-green-500/20' },
-          { label: 'Active Projects', value: projects.length, icon: '📁', color: 'from-orange-500/20 to-amber-500/20 border-orange-500/20' },
+          { label: 'Total Bugs', value: bugs.length, icon: '🐛' },
+          { label: 'AI Accuracy', value: `${aiStats.accuracy}%`, icon: '🧠' },
+          { label: 'Avg Resolution', value: avgResolution, icon: '⏱️' },
+          { label: 'Active Projects', value: projects.length, icon: '📁' },
         ].map(s => (
-          <div key={s.label} className={`bg-gradient-to-br ${s.color} border rounded-xl p-4`}>
+          <div key={s.label} className="bg-card border border-border rounded-lg p-4 shadow-sm">
             <div className="flex items-center justify-between mb-1">
               <span className="text-lg">{s.icon}</span>
             </div>
-            <p className="text-2xl font-bold text-white">{s.value}</p>
-            <p className="text-xs text-slate-400">{s.label}</p>
+            <p className="text-2xl font-bold text-foreground">{s.value}</p>
+            <p className="text-xs text-muted-foreground">{s.label}</p>
           </div>
         ))}
       </div>
@@ -111,8 +136,8 @@ export default function Analytics() {
       {/* Charts Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Severity Distribution */}
-        <div className="bg-white/5 rounded-xl border border-white/5 p-5">
-          <h3 className="text-sm font-semibold text-white mb-4">Severity Distribution</h3>
+        <div className="bg-card border border-border rounded-lg p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Severity Distribution</h3>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie data={severityData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value"
@@ -121,20 +146,20 @@ export default function Analytics() {
                   <Cell key={entry.name} fill={SEVERITY_COLORS[entry.name as keyof typeof SEVERITY_COLORS]} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 'calc(var(--radius) - 2px)', color: 'hsl(var(--foreground))', fontSize: '12px' }} />
             </PieChart>
           </ResponsiveContainer>
         </div>
 
         {/* Status Breakdown */}
-        <div className="bg-white/5 rounded-xl border border-white/5 p-5">
-          <h3 className="text-sm font-semibold text-white mb-4">Status Breakdown</h3>
+        <div className="bg-card border border-border rounded-lg p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Status Breakdown</h3>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={statusData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} />
-              <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} />
-              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis dataKey="name" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 'calc(var(--radius) - 2px)', color: 'hsl(var(--foreground))', fontSize: '12px' }} cursor={{ fill: 'hsl(var(--secondary))' }} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                 {statusData.map((entry) => (
                   <Cell key={entry.name} fill={STATUS_COLORS[entry.name as keyof typeof STATUS_COLORS]} />
@@ -145,14 +170,14 @@ export default function Analytics() {
         </div>
 
         {/* Bug Trends */}
-        <div className="bg-white/5 rounded-xl border border-white/5 p-5">
-          <h3 className="text-sm font-semibold text-white mb-4">Bug Trends (14 Days)</h3>
+        <div className="bg-card border border-border rounded-lg p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Bug Trends (14 Days)</h3>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} />
-              <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} />
-              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis dataKey="date" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 'calc(var(--radius) - 2px)', color: 'hsl(var(--foreground))', fontSize: '12px' }} />
               <Legend wrapperStyle={{ fontSize: '11px' }} />
               <Line type="monotone" dataKey="created" stroke="#a855f7" strokeWidth={2} dot={{ r: 3 }} name="Created" />
               <Line type="monotone" dataKey="resolved" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} name="Resolved" />
@@ -161,14 +186,14 @@ export default function Analytics() {
         </div>
 
         {/* Team Performance */}
-        <div className="bg-white/5 rounded-xl border border-white/5 p-5">
-          <h3 className="text-sm font-semibold text-white mb-4">Team Workload</h3>
+        <div className="bg-card border border-border rounded-lg p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Team Workload</h3>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={teamData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} />
-              <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} />
-              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis dataKey="name" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 'calc(var(--radius) - 2px)', color: 'hsl(var(--foreground))', fontSize: '12px' }} cursor={{ fill: 'hsl(var(--secondary))' }} />
               <Legend wrapperStyle={{ fontSize: '11px' }} />
               <Bar dataKey="assigned" fill="#a855f7" radius={[4, 4, 0, 0]} name="Assigned" />
               <Bar dataKey="resolved" fill="#22c55e" radius={[4, 4, 0, 0]} name="Resolved" />
@@ -179,14 +204,14 @@ export default function Analytics() {
       </div>
 
       {/* Project Overview */}
-      <div className="bg-white/5 rounded-xl border border-white/5 p-5">
-        <h3 className="text-sm font-semibold text-white mb-4">📁 Project Bug Density</h3>
+      <div className="bg-card border border-border rounded-lg p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-foreground mb-4">📁 Project Bug Density</h3>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={projectData} layout="vertical">
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-            <XAxis type="number" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} />
-            <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} width={100} />
-            <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+            <XAxis type="number" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis type="category" dataKey="name" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} width={100} />
+            <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 'calc(var(--radius) - 2px)', color: 'hsl(var(--foreground))', fontSize: '12px' }} cursor={{ fill: 'hsl(var(--secondary))' }} />
             <Legend wrapperStyle={{ fontSize: '11px' }} />
             <Bar dataKey="open" fill="#eab308" stackId="a" name="Open" />
             <Bar dataKey="resolved" fill="#22c55e" stackId="a" name="Resolved" radius={[0, 4, 4, 0]} />

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import { useAppContext } from '../store';
 import { t } from '../i18n';
 import type { Role } from '../types';
@@ -11,15 +12,16 @@ export default function Register() {
   const [role, setRole] = useState<Role>('tester');
   const [error, setError] = useState('');
   const [showVerification, setShowVerification] = useState(false);
-  const { register, verifyEmail, currentUser, language } = useAppContext();
+  const { register, verifyEmail, currentUser, loginWithGoogle, language } = useAppContext();
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!name || !email || !password) { setError('Please fill in all fields'); return; }
     if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
-    if (register(name, email, password, role)) {
+    const success = await register(name, email, password, role);
+    if (success) {
       setShowVerification(true);
     } else {
       setError('Email already exists');
@@ -35,34 +37,34 @@ export default function Register() {
 
   if (showVerification) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="w-full max-w-md">
-          <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-8 shadow-2xl text-center">
-            <div className="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="bg-card border border-border rounded-lg p-8 shadow-md text-center">
+            <div className="w-16 h-16 bg-secondary text-secondary-foreground rounded-full flex items-center justify-center mx-auto mb-4">
               <span className="text-3xl">📧</span>
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Verify Your Email</h2>
-            <p className="text-slate-400 text-sm mb-2">
-              We've sent a verification email to <span className="text-purple-400 font-medium">{email}</span>
+            <h2 className="text-2xl font-bold text-foreground mb-2">Verify Your Email</h2>
+            <p className="text-muted-foreground text-sm mb-2">
+              We've sent a verification email to <span className="text-foreground font-medium">{email}</span>
             </p>
-            <p className="text-xs text-slate-500 mb-6">(Simulated — click below to verify)</p>
+            <p className="text-xs text-muted-foreground mb-6">(Simulated — click below to verify)</p>
 
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 text-left">
-              <p className="text-xs text-slate-500 mb-1">📨 From: noreply@bugtracker.ai</p>
-              <p className="text-xs text-slate-500 mb-2">📋 Subject: Verify your email address</p>
-              <div className="border-t border-white/5 pt-3">
-                <p className="text-xs text-slate-400">Hello {name},</p>
-                <p className="text-xs text-slate-400 mt-1">Click the button below to verify your email and activate your account.</p>
-                <p className="text-[10px] text-slate-600 mt-2 font-mono">Token: VRF-{btoa(email).slice(0, 16)}</p>
+            <div className="bg-background border border-border rounded-md p-4 mb-4 text-left">
+              <p className="text-xs text-muted-foreground mb-1">📨 From: noreply@bugtracker.ai</p>
+              <p className="text-xs text-muted-foreground mb-2">📋 Subject: Verify your email address</p>
+              <div className="border-t border-border pt-3">
+                <p className="text-xs text-foreground/80">Hello {name},</p>
+                <p className="text-xs text-foreground/80 mt-1">Click the button below to verify your email and activate your account.</p>
+                <p className="text-[10px] text-muted-foreground mt-2 font-mono">Token: VRF-{btoa(email).slice(0, 16)}</p>
               </div>
             </div>
 
             <button onClick={handleVerify}
-              className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-semibold rounded-xl shadow-lg shadow-green-500/20 transition transform hover:scale-[1.02]">
+              className="w-full py-2.5 bg-foreground text-background font-medium rounded-md shadow-sm hover:bg-foreground/90 transition-colors">
               ✅ Verify Email & Continue
             </button>
             <button onClick={() => navigate('/dashboard')}
-              className="w-full mt-2 py-2 text-xs text-slate-500 hover:text-slate-300 transition">
+              className="w-full mt-2 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
               Skip for now →
             </button>
           </div>
@@ -78,40 +80,40 @@ export default function Register() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center text-2xl shadow-lg shadow-purple-500/30">🐛</div>
-            <h1 className="text-3xl font-bold text-white">BugTracker<span className="text-purple-400">AI</span></h1>
+            <div className="w-10 h-10 bg-foreground text-background rounded-md flex items-center justify-center text-xl shadow-sm">🐛</div>
+            <h1 className="text-3xl font-bold text-foreground">BugTracker<span className="text-muted-foreground font-normal">AI</span></h1>
           </div>
         </div>
-        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-8 shadow-2xl">
-          <h2 className="text-2xl font-bold text-white mb-6">{t('createAccount', language)}</h2>
-          {error && <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-300 text-sm" role="alert">{error}</div>}
+        <div className="bg-card border border-border rounded-lg p-8 shadow-md">
+          <h2 className="text-2xl font-bold text-foreground mb-6">{t('createAccount', language)}</h2>
+          {error && <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm" role="alert">{error}</div>}
           <form onSubmit={handleSubmit} className="space-y-5" aria-label="Registration form">
             <div>
-              <label htmlFor="reg-name" className="block text-sm font-medium text-slate-300 mb-1.5">{t('fullName', language)}</label>
+              <label htmlFor="reg-name" className="block text-sm font-medium text-foreground mb-1.5">{t('fullName', language)}</label>
               <input id="reg-name" type="text" value={name} onChange={e => setName(e.target.value)} placeholder="John Doe" aria-required="true"
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition" />
+                className="w-full px-3 py-2 bg-background border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring transition-colors" />
             </div>
             <div>
-              <label htmlFor="reg-email" className="block text-sm font-medium text-slate-300 mb-1.5">{t('email', language)}</label>
+              <label htmlFor="reg-email" className="block text-sm font-medium text-foreground mb-1.5">{t('email', language)}</label>
               <input id="reg-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="john@example.com" aria-required="true"
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition" />
+                className="w-full px-3 py-2 bg-background border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring transition-colors" />
             </div>
             <div>
-              <label htmlFor="reg-password" className="block text-sm font-medium text-slate-300 mb-1.5">{t('password', language)}</label>
+              <label htmlFor="reg-password" className="block text-sm font-medium text-foreground mb-1.5">{t('password', language)}</label>
               <input id="reg-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" aria-required="true"
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition" />
+                className="w-full px-3 py-2 bg-background border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring transition-colors" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">{t('role', language)}</label>
+              <label className="block text-sm font-medium text-foreground mb-2">{t('role', language)}</label>
               <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Select role">
                 {roles.map(r => (
                   <button key={r.value} type="button" onClick={() => setRole(r.value)}
                     role="radio" aria-checked={role === r.value} aria-label={`${r.label} - ${r.desc}`}
-                    className={`p-3 rounded-xl border text-center transition ${role === r.value ? 'bg-purple-600/30 border-purple-500 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
+                    className={`p-3 rounded-md border text-center transition-colors ${role === r.value ? 'bg-secondary border-border text-secondary-foreground shadow-sm' : 'bg-background border-border text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
                       }`}>
                     <div className="text-xl mb-1">{r.icon}</div>
                     <div className="text-xs font-medium">{r.label}</div>
@@ -119,12 +121,31 @@ export default function Register() {
                 ))}
               </div>
             </div>
-            <button type="submit" className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl shadow-lg shadow-purple-500/30 transition transform hover:scale-[1.02]">
+            <button type="submit" className="w-full py-2.5 bg-foreground text-background font-medium rounded-md shadow-sm hover:bg-foreground/90 transition-colors">
               {t('createAccount', language)}
             </button>
           </form>
-          <p className="mt-6 text-center text-slate-400 text-sm">
-            {t('alreadyHaveAccount', language)} <Link to="/login" className="text-purple-400 hover:text-purple-300 font-medium">{t('signIn', language)}</Link>
+
+          <div className="mt-4 flex flex-col items-center">
+            <GoogleLogin
+              onSuccess={async (credentialResponse) => {
+                if (credentialResponse.credential) {
+                  const success = await loginWithGoogle(credentialResponse.credential);
+                  if (success) {
+                    navigate('/dashboard');
+                  } else {
+                    setError('Google Sign-In failed');
+                  }
+                }
+              }}
+              onError={() => {
+                setError('Google Sign-In was unsuccessful');
+              }}
+              useOneTap
+            />
+          </div>
+          <p className="mt-6 text-center text-muted-foreground text-sm">
+            {t('alreadyHaveAccount', language)} <Link to="/login" className="text-foreground hover:underline font-medium">{t('signIn', language)}</Link>
           </p>
         </div>
       </div>

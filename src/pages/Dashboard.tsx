@@ -1,18 +1,52 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { useAppContext } from '../store';
-import { t } from '../i18n';
-import { canDragBug } from '../types';
-import type { BugStatus, Severity, Bug } from '../types';
+/**
+ * src/pages/Dashboard.tsx
+ * 
+ * CORE VIEW: The main Kanban Board and Analytics Hub.
+ * 
+ * Features:
+ * 1. Filter, Sort, and Search Open/Closed issues.
+ * 2. Drag and Drop: Relies on HTML5 Drag and Drop API (+ Keyboard accessibility).
+ * 3. Read/Write Context: Reads the global `bugs` array from `store.tsx`. When a user 
+ *    drags a bug, it fires `changeBugStatus(id, newStatus)` which calls the backend 
+ *    and immediately syncs the UI.
+ * 4. Statistics Panel: Computes active metrics based on the filtered list.
+ */
+/**
+ * src/pages/Dashboard.tsx
+ * 
+ * CORE VIEW: The main Kanban Board and Analytics Hub.
+ * 
+ * Features:
+ * 1. Filter, Sort, and Search Open/Closed issues.
+ * 2. Drag and Drop: Relies on HTML5 Drag and Drop API (+ Keyboard accessibility).
+ * 3. Read/Write Context: Reads the global `bugs` array from `store.tsx`. When a user 
+ *    drags a bug, it fires `changeBugStatus(id, newStatus)` which calls the backend 
+ *    and immediately syncs the UI.
+ * 4. Statistics Panel: Computes active metrics based on the filtered list.
+ * 
+ * Why this code/type is used:
+ * - useState/useMemo: Manages complex local state for filters, search, and calculated statistics efficiently.
+ * - useRef: Manages references to DOM elements necessary for custom Drag & Drop ghost images and context menus.
+ * - useEffect/useCallback: Handles global event listeners for keyboard-accessible Drag & Drop and click-away detection.
+ * - HTML5 DnD API (onDragStart, onDragOver, onDrop): Used over external libraries for lightweight, native drag-and-drop support.
+ */
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react'; // Core React hooks for state, memoization, and lifecycle
+import { useNavigate, Link } from 'react-router-dom'; // Routing utilities
+import { useAppContext } from '../store'; // Global state access
+import { t } from '../i18n'; // Translation utility
+import { canDragBug } from '../types'; // Domain logic for permissions
+import type { BugStatus, Severity, Bug } from '../types'; // Type definitions
 
+// Define the configuration for the Kanban columns, mapping status to display properties
 const STATUS_COLS: { status: BugStatus; label: string; color: string; icon: string; accent: string; glow: string }[] = [
-  { status: 'new', label: 'New', color: 'border-blue-500/30 bg-blue-500/5', icon: '🆕', accent: 'border-l-blue-500', glow: 'shadow-blue-500/30 border-blue-500/60' },
-  { status: 'open', label: 'Open', color: 'border-orange-500/30 bg-orange-500/5', icon: '📂', accent: 'border-l-orange-500', glow: 'shadow-orange-500/30 border-orange-500/60' },
-  { status: 'in-progress', label: 'In Progress', color: 'border-yellow-500/30 bg-yellow-500/5', icon: '🔧', accent: 'border-l-yellow-500', glow: 'shadow-yellow-500/30 border-yellow-500/60' },
-  { status: 'resolved', label: 'Resolved', color: 'border-green-500/30 bg-green-500/5', icon: '✅', accent: 'border-l-green-500', glow: 'shadow-green-500/30 border-green-500/60' },
-  { status: 'closed', label: 'Closed', color: 'border-slate-500/30 bg-slate-500/5', icon: '🔒', accent: 'border-l-slate-500', glow: 'shadow-slate-500/30 border-slate-500/60' },
+  { status: 'new', label: 'New', color: 'border-border bg-card/50', icon: '🆕', accent: 'border-l-blue-500', glow: 'ring-1 ring-blue-500/50' },
+  { status: 'open', label: 'Open', color: 'border-border bg-card/50', icon: '📂', accent: 'border-l-orange-500', glow: 'ring-1 ring-orange-500/50' },
+  { status: 'in-progress', label: 'In Progress', color: 'border-border bg-card/50', icon: '🔧', accent: 'border-l-yellow-500', glow: 'ring-1 ring-yellow-500/50' },
+  { status: 'resolved', label: 'Resolved', color: 'border-border bg-card/50', icon: '✅', accent: 'border-l-green-500', glow: 'ring-1 ring-green-500/50' },
+  { status: 'closed', label: 'Closed', color: 'border-border bg-card/50', icon: '🔒', accent: 'border-l-zinc-500', glow: 'ring-1 ring-zinc-500/50' },
 ];
 
+// Map severity levels to label background and text colors
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: 'bg-red-500/20 text-red-400',
   high: 'bg-orange-500/20 text-orange-400',
@@ -20,6 +54,7 @@ const SEVERITY_COLORS: Record<Severity, string> = {
   low: 'bg-green-500/20 text-green-400',
 };
 
+// Map severity levels to card border colors
 const SEVERITY_BORDER: Record<Severity, string> = {
   critical: 'border-l-red-500',
   high: 'border-l-orange-500',
@@ -27,7 +62,7 @@ const SEVERITY_BORDER: Record<Severity, string> = {
   low: 'border-l-green-500',
 };
 
-// Toast notification component
+// Toast notification component used for temporary action feedback (e.g., successful move)
 function Toast({ message, onDone }: { message: string; onDone: () => void }) {
   useEffect(() => {
     const t = setTimeout(onDone, 2500);
@@ -35,14 +70,14 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
   }, [onDone]);
   return (
     <div className="fixed bottom-6 right-6 z-50 animate-slide-up">
-      <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl shadow-green-500/30 flex items-center gap-2.5 text-sm font-medium">
+      <div className="bg-foreground text-background px-4 py-3 rounded-md shadow-md flex items-center gap-2.5 text-sm font-medium">
         <span className="text-lg">✅</span> {message}
       </div>
     </div>
   );
 }
 
-// Context menu for quick status change
+// Context menu component for right-clicking bugs to perform quick status changes
 function ContextMenu({ x, y, bug, onClose, onChangeStatus }: {
   x: number; y: number; bug: Bug;
   onClose: () => void; onChangeStatus: (bugId: string, status: BugStatus) => void;
@@ -68,19 +103,19 @@ function ContextMenu({ x, y, bug, onClose, onChangeStatus }: {
   ];
 
   return (
-    <div ref={ref} className="fixed z-50 bg-slate-800 border border-white/15 rounded-xl shadow-2xl shadow-black/50 py-1.5 min-w-[200px] animate-scale-in"
+    <div ref={ref} className="fixed z-50 bg-popover border border-border rounded-md shadow-md py-1 min-w-[200px] animate-scale-in"
       style={{ left: Math.min(x, window.innerWidth - 220), top: Math.min(y, window.innerHeight - 300) }}
       role="menu" aria-label="Change bug status">
-      <div className="px-3 py-2 border-b border-white/10">
-        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Move to</p>
-        <p className="text-xs text-white font-medium truncate mt-0.5">{bug.title}</p>
+      <div className="px-3 py-2 border-b border-border">
+        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Move to</p>
+        <p className="text-xs text-foreground font-medium truncate mt-0.5">{bug.title}</p>
       </div>
       {statuses.map(s => (
         <button key={s.status} onClick={() => { onChangeStatus(bug.id, s.status); onClose(); }}
           disabled={bug.status === s.status}
-          className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2.5 transition ${bug.status === s.status
-            ? 'text-purple-400 bg-purple-500/10 font-medium cursor-default'
-            : 'text-slate-300 hover:bg-white/10 hover:text-white'
+          className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2.5 transition-colors ${bug.status === s.status
+            ? 'text-foreground bg-secondary font-medium cursor-default'
+            : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
             }`}
           role="menuitem">
           <span>{s.icon}</span>
@@ -92,10 +127,13 @@ function ContextMenu({ x, y, bug, onClose, onChangeStatus }: {
   );
 }
 
+// Main Dashboard functional component
 export default function Dashboard() {
+  // Destructure application context state and mutations
   const { bugs, projects, users, changeBugStatus, currentUser, language, isGuest } = useAppContext();
-  const navigate = useNavigate();
+  const navigate = useNavigate(); // Hook for routing
 
+  // State variables for various filters applied to the bug list
   const [search, setSearch] = useState('');
   const [filterProject, setFilterProject] = useState('');
   const [filterSeverity, setFilterSeverity] = useState('');
@@ -103,39 +141,41 @@ export default function Dashboard() {
   const [filterTag, setFilterTag] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(false); // Controls visibility of advanced filters
 
-  // Drag-and-drop state
-  const [dragBugId, setDragBugId] = useState<string | null>(null);
-  const [hoverColumn, setHoverColumn] = useState<BugStatus | null>(null);
-  const [justDroppedId, setJustDroppedId] = useState<string | null>(null);
+  // State for HTML5 Drag-and-drop
+  const [dragBugId, setDragBugId] = useState<string | null>(null); // ID of bug being dragged
+  const [hoverColumn, setHoverColumn] = useState<BugStatus | null>(null); // Status column currently hovered over
+  const [justDroppedId, setJustDroppedId] = useState<string | null>(null); // ID of bug just dropped (for animation)
 
-  // Context menu state
+  // State for the custom context menu (right click)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; bug: Bug } | null>(null);
 
-  // Toast state
+  // State for toast notifications
   const [toast, setToast] = useState<string | null>(null);
 
-  // Expanded card state (inline preview)
+  // State to track which Kanban card is expanded to show inline preview
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
 
-  // Keyboard DnD state
-  const [kbDragBugId, setKbDragBugId] = useState<string | null>(null);
-  const [kbDragColIdx, setKbDragColIdx] = useState<number>(0);
+  // State for keyboard-accessible Drag-and-drop
+  const [kbDragBugId, setKbDragBugId] = useState<string | null>(null); // ID of bug being 'carried' by keyboard
+  const [kbDragColIdx, setKbDragColIdx] = useState<number>(0); // Index of the column the kb ghost is currently in
 
-  // Refs
-  const dragImageRef = useRef<HTMLDivElement>(null);
-  const columnRefs = useRef<Map<BugStatus, HTMLDivElement>>(new Map());
+  // Refs for DOM nodes required for advanced interactions
+  const dragImageRef = useRef<HTMLDivElement>(null); // Ref to the ghost image element shown during drag
+  const columnRefs = useRef<Map<BugStatus, HTMLDivElement>>(new Map()); // Refs to the column drop zones
 
+  // Memoize the extraction of all unique tags from bugs for the filter dropdown
   const allTags = useMemo(() => {
     const tags = new Set<string>();
     bugs.forEach(b => b.tags?.forEach(t => tags.add(t)));
     return Array.from(tags).sort();
   }, [bugs]);
 
-  // Filter bugs
+  // Memoize the filtered bug list to avoid recalculating on every re-render unless dependencies change
   const filtered = useMemo(() => {
     return bugs.filter(b => {
+      // Sequential guard clauses to filter out non-matching bugs
       if (search && !b.title.toLowerCase().includes(search.toLowerCase()) && !b.description.toLowerCase().includes(search.toLowerCase())) return false;
       if (filterProject && b.projectId !== filterProject) return false;
       if (filterSeverity && b.severity !== filterSeverity) return false;
@@ -143,10 +183,11 @@ export default function Dashboard() {
       if (filterTag && (!b.tags || !b.tags.includes(filterTag))) return false;
       if (filterDateFrom && new Date(b.createdAt) < new Date(filterDateFrom)) return false;
       if (filterDateTo && new Date(b.createdAt) > new Date(filterDateTo + 'T23:59:59')) return false;
-      return true;
+      return true; // Bug passed all active filters
     });
   }, [bugs, search, filterProject, filterSeverity, filterAssignee, filterTag, filterDateFrom, filterDateTo]);
 
+  // Derived statistics computed from the currently filtered bugs
   const stats = useMemo(() => ({
     total: filtered.length,
     new: filtered.filter(b => b.status === 'new').length,
@@ -157,21 +198,24 @@ export default function Dashboard() {
     critical: filtered.filter(b => b.severity === 'critical').length,
   }), [filtered]);
 
+  // Determine if the current user has permission to drag/change bug statuses
   const userCanDrag = currentUser ? canDragBug(currentUser.role) : false;
 
-  // --- Drag handlers ---
+  // --- HTML5 Drag handlers ---
+
+  // Fired when the user starts dragging a bug card
   const handleDragStart = useCallback((e: React.DragEvent, bugId: string) => {
     if (!userCanDrag) return;
     setDragBugId(bugId);
-    setExpandedCard(null);
-    // Custom ghost image
+    setExpandedCard(null); // Collapse immediately if expanded
+    // Set custom ghost image for nicer visual feedback instead of browser default
     if (dragImageRef.current) {
       const bug = bugs.find(b => b.id === bugId);
       if (bug) {
         dragImageRef.current.textContent = bug.title;
         dragImageRef.current.style.display = 'block';
         e.dataTransfer.setDragImage(dragImageRef.current, 12, 12);
-        // Hide after next frame
+        // Hide DOM element after next frame so it doesn't stay visible
         requestAnimationFrame(() => {
           if (dragImageRef.current) dragImageRef.current.style.display = 'none';
         });
@@ -180,15 +224,18 @@ export default function Dashboard() {
     e.dataTransfer.effectAllowed = 'move';
   }, [userCanDrag, bugs]);
 
+  // Fired continuously while dragging over a column
   const handleDragOver = useCallback((e: React.DragEvent, status: BugStatus) => {
     if (!userCanDrag || !dragBugId) return;
-    e.preventDefault();
+    e.preventDefault(); // Must prevent default to allow dropping
     e.dataTransfer.dropEffect = 'move';
-    setHoverColumn(status);
+    setHoverColumn(status); // Update state to highlight dropzone
   }, [userCanDrag, dragBugId]);
 
+  // Fired when dragging leaves a column
   const handleDragLeave = useCallback((e: React.DragEvent, status: BugStatus) => {
-    // Only clear if we're actually leaving this column (not entering a child)
+    // Check bounding rect to ensure we actually exited the column boundary, 
+    // not just hovering over a child element inside it
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX, y = e.clientY;
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
@@ -196,21 +243,25 @@ export default function Dashboard() {
     }
   }, [hoverColumn]);
 
+  // Fired when the user releases the drag over a valid dropzone
   const handleDrop = useCallback((e: React.DragEvent, status: BugStatus) => {
     e.preventDefault();
     if (dragBugId && userCanDrag) {
       const bug = bugs.find(b => b.id === dragBugId);
+      // Only mutate if the column is different from current status
       if (bug && bug.status !== status) {
-        changeBugStatus(dragBugId, status);
-        setJustDroppedId(dragBugId);
-        setToast(`Moved "${bug.title}" → ${status.replace('-', ' ')}`);
-        setTimeout(() => setJustDroppedId(null), 800);
+        changeBugStatus(dragBugId, status); // Dispatch state change
+        setJustDroppedId(dragBugId); // Trigger drop animation
+        setToast(`Moved "${bug.title}" → ${status.replace('-', ' ')}`); // Show success toast
+        setTimeout(() => setJustDroppedId(null), 800); // Clear animation state
       }
     }
+    // Reset drag states
     setDragBugId(null);
     setHoverColumn(null);
   }, [dragBugId, userCanDrag, bugs, changeBugStatus]);
 
+  // Fired when drag operation ends (whether dropped successfully or canceled)
   const handleDragEnd = useCallback(() => {
     setDragBugId(null);
     setHoverColumn(null);
@@ -234,56 +285,63 @@ export default function Dashboard() {
   }, [bugs, changeBugStatus]);
 
   // --- Keyboard DnD ---
+
+  // Initiates keyboard-based drag session when pressing Enter on a focused card
   const handleCardKeyDown = useCallback((e: React.KeyboardEvent, bug: Bug) => {
     if (!userCanDrag || isGuest) return;
 
     if (e.key === 'Enter' && !kbDragBugId) {
-      // Pick up
+      // Pick up the card virtually
       e.preventDefault();
       const colIdx = STATUS_COLS.findIndex(c => c.status === bug.status);
-      setKbDragBugId(bug.id);
-      setKbDragColIdx(colIdx);
-      setHoverColumn(bug.status);
+      setKbDragBugId(bug.id); // Set active kb dragged id
+      setKbDragColIdx(colIdx); // Track starting column index
+      setHoverColumn(bug.status); // Highlight starting column visually
     }
   }, [userCanDrag, isGuest, kbDragBugId]);
 
-  // Global keyboard listener for keyboard DnD
+  // Global keyboard listener to intercept arrow keys when a keyboard drag session is active
   useEffect(() => {
-    if (!kbDragBugId) return;
+    if (!kbDragBugId) return; // Only bind if actively dragging via kb
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Cancel operation
         setKbDragBugId(null);
         setHoverColumn(null);
         return;
       }
       if (e.key === 'ArrowRight') {
+        // Move ghost right by incrementing index
         e.preventDefault();
         const next = Math.min(kbDragColIdx + 1, STATUS_COLS.length - 1);
         setKbDragColIdx(next);
-        setHoverColumn(STATUS_COLS[next].status);
+        setHoverColumn(STATUS_COLS[next].status); // Highlight new column
       }
       if (e.key === 'ArrowLeft') {
+        // Move ghost left by decrementing index
         e.preventDefault();
         const prev = Math.max(kbDragColIdx - 1, 0);
         setKbDragColIdx(prev);
-        setHoverColumn(STATUS_COLS[prev].status);
+        setHoverColumn(STATUS_COLS[prev].status); // Highlight new column
       }
       if (e.key === 'Enter') {
+        // Drop the item in the currently active column
         e.preventDefault();
         const targetStatus = STATUS_COLS[kbDragColIdx].status;
         const bug = bugs.find(b => b.id === kbDragBugId);
         if (bug && bug.status !== targetStatus) {
-          changeBugStatus(kbDragBugId, targetStatus);
+          changeBugStatus(kbDragBugId, targetStatus); // Dispatch state change
           setJustDroppedId(kbDragBugId);
           setToast(`Moved "${bug.title}" → ${targetStatus.replace('-', ' ')}`);
           setTimeout(() => setJustDroppedId(null), 800);
         }
+        // Reset states
         setKbDragBugId(null);
         setHoverColumn(null);
       }
     };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler); // Cleanup on unmount/state change
   }, [kbDragBugId, kbDragColIdx, bugs, changeBugStatus]);
 
   // --- Card expand toggle ---
@@ -346,17 +404,17 @@ export default function Dashboard() {
       {/* Quick Actions */}
       {!isGuest && (
         <div className="flex items-center gap-3 flex-wrap">
-          <Link to="/report" className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-sm font-medium rounded-xl shadow-lg shadow-purple-500/20 transition flex items-center gap-2">
+          <Link to="/report" className="px-4 py-2 bg-foreground text-background hover:bg-foreground/90 text-sm font-medium rounded-md shadow-sm transition-colors flex items-center gap-2">
             <span>🐛</span> {t('reportBug', language)}
           </Link>
-          <Link to="/analytics" className="px-4 py-2 bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 text-sm font-medium rounded-xl transition flex items-center gap-2">
+          <Link to="/analytics" className="px-4 py-2 bg-secondary border border-border text-foreground hover:bg-secondary/80 text-sm font-medium rounded-md transition-colors flex items-center gap-2">
             <span>📈</span> {t('analytics', language)}
           </Link>
-          <Link to="/ai-engine" className="px-4 py-2 bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 text-sm font-medium rounded-xl transition flex items-center gap-2">
+          <Link to="/ai-engine" className="px-4 py-2 bg-secondary border border-border text-foreground hover:bg-secondary/80 text-sm font-medium rounded-md transition-colors flex items-center gap-2">
             <span>🧠</span> {t('aiEngine', language)}
           </Link>
           {currentUser?.role === 'admin' && (
-            <Link to="/admin" className="px-4 py-2 bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 text-sm font-medium rounded-xl transition flex items-center gap-2">
+            <Link to="/admin" className="px-4 py-2 bg-secondary border border-border text-foreground hover:bg-secondary/80 text-sm font-medium rounded-md transition-colors flex items-center gap-2">
               <span>⚙️</span> {t('adminPanel', language)}
             </Link>
           )}
@@ -366,40 +424,40 @@ export default function Dashboard() {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
-          { label: t('totalBugs', language), value: stats.total, icon: '🐛', color: 'from-purple-500/20 to-indigo-500/20 border-purple-500/20' },
-          { label: t('new', language), value: stats.new, icon: '🆕', color: 'from-blue-500/20 to-cyan-500/20 border-blue-500/20' },
-          { label: t('open', language), value: stats.open, icon: '📂', color: 'from-orange-500/20 to-amber-500/20 border-orange-500/20' },
-          { label: t('inProgress', language), value: stats.inProgress, icon: '🔧', color: 'from-yellow-500/20 to-orange-500/20 border-yellow-500/20' },
-          { label: t('resolved', language), value: stats.resolved, icon: '✅', color: 'from-green-500/20 to-emerald-500/20 border-green-500/20' },
-          { label: t('closed', language), value: stats.closed, icon: '🔒', color: 'from-slate-500/20 to-gray-500/20 border-slate-500/20' },
-          { label: t('critical', language), value: stats.critical, icon: '🔴', color: 'from-red-500/20 to-rose-500/20 border-red-500/20' },
+          { label: t('totalBugs', language), value: stats.total, icon: '🐛' },
+          { label: t('new', language), value: stats.new, icon: '🆕' },
+          { label: t('open', language), value: stats.open, icon: '📂' },
+          { label: t('inProgress', language), value: stats.inProgress, icon: '🔧' },
+          { label: t('resolved', language), value: stats.resolved, icon: '✅' },
+          { label: t('closed', language), value: stats.closed, icon: '🔒' },
+          { label: t('critical', language), value: stats.critical, icon: '🔴' },
         ].map(s => (
-          <div key={s.label} className={`bg-gradient-to-br ${s.color} rounded-xl p-3 border`}>
+          <div key={s.label} className="bg-card rounded-md p-3 border border-border">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-sm">{s.icon}</span>
-              <span className="text-lg font-bold text-white">{s.value}</span>
+              <span className="text-lg font-bold text-foreground">{s.value}</span>
             </div>
-            <p className="text-[10px] text-slate-400">{s.label}</p>
+            <p className="text-[10px] text-muted-foreground">{s.label}</p>
           </div>
         ))}
       </div>
 
       {/* Filters */}
-      <div className="bg-white/5 rounded-xl border border-white/10 p-4 space-y-3">
+      <div className="bg-card rounded-md border border-border p-4 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-[200px]">
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('search', language)}
-              className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               aria-label={t('search', language)} />
           </div>
           <select value={filterProject} onChange={e => setFilterProject(e.target.value)}
-            className="px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+            className="px-3 py-2 bg-background border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label={t('project', language)}>
             <option value="">{t('allProjects', language)}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <select value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)}
-            className="px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+            className="px-3 py-2 bg-background border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label={t('severity', language)}>
             <option value="">{t('allSeverities', language)}</option>
             <option value="critical">🔴 {t('critical', language)}</option>
@@ -408,47 +466,47 @@ export default function Dashboard() {
             <option value="low">🟢 {t('low', language)}</option>
           </select>
           <button onClick={() => setShowFilters(!showFilters)}
-            className={`px-3 py-2.5 rounded-lg text-sm font-medium transition flex items-center gap-1 ${showFilters || hasActiveFilters ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30' : 'bg-white/5 border border-white/10 text-slate-400 hover:text-white'}`}
+            className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-1 ${showFilters || hasActiveFilters ? 'bg-secondary text-foreground' : 'bg-background border border-border text-muted-foreground hover:text-foreground'}`}
             aria-expanded={showFilters} aria-label="Advanced filters">
-            🔽 {t('filter', language)} {hasActiveFilters && <span className="w-2 h-2 bg-purple-500 rounded-full" />}
+            🔽 {t('filter', language)} {hasActiveFilters && <span className="w-2 h-2 bg-zinc-400 rounded-full" />}
           </button>
           {hasActiveFilters && (
-            <button onClick={clearFilters} className="text-xs text-red-400 hover:text-red-300 px-2 py-1" aria-label="Clear all filters">✕ Clear</button>
+            <button onClick={clearFilters} className="text-xs text-destructive hover:text-destructive/80 px-2 py-1" aria-label="Clear all filters">✕ Clear</button>
           )}
-          <button onClick={exportToCSV} className="px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-slate-400 hover:text-white transition flex items-center gap-1" aria-label="Export to CSV">
+          <button onClick={exportToCSV} className="px-3 py-2 bg-background border border-border rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors flex items-center gap-1" aria-label="Export to CSV">
             📥 Export
           </button>
         </div>
         {showFilters && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-white/5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-border">
             <div>
-              <label className="block text-[10px] text-slate-500 mb-1">{t('assignee', language)}</label>
+              <label className="block text-[10px] text-muted-foreground mb-1">{t('assignee', language)}</label>
               <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
-                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full px-3 py-1.5 bg-background border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 aria-label={t('assignee', language)}>
                 <option value="">All Assignees</option>
                 {developers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-[10px] text-slate-500 mb-1">{t('tags', language)}</label>
+              <label className="block text-[10px] text-muted-foreground mb-1">{t('tags', language)}</label>
               <select value={filterTag} onChange={e => setFilterTag(e.target.value)}
-                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full px-3 py-1.5 bg-background border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 aria-label={t('tags', language)}>
                 <option value="">All Tags</option>
                 {allTags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-[10px] text-slate-500 mb-1">Date From</label>
+              <label className="block text-[10px] text-muted-foreground mb-1">Date From</label>
               <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
-                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full px-3 py-1.5 bg-background border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 aria-label="Filter from date" />
             </div>
             <div>
-              <label className="block text-[10px] text-slate-500 mb-1">Date To</label>
+              <label className="block text-[10px] text-muted-foreground mb-1">Date To</label>
               <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
-                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full px-3 py-1.5 bg-background border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 aria-label="Filter to date" />
             </div>
           </div>
@@ -476,9 +534,9 @@ export default function Dashboard() {
           return (
             <div key={col.status}
               ref={el => { if (el) columnRefs.current.set(col.status, el); }}
-              className={`rounded-xl border p-3 min-h-[220px] transition-all duration-300 relative
+              className={`rounded-md border p-3 min-h-[220px] transition-all duration-300 relative
                 ${col.color}
-                ${isHovered && !isSameCol ? `shadow-lg ${col.glow} scale-[1.02] ring-2 ring-offset-2 ring-offset-slate-900` : ''}
+                ${isHovered && !isSameCol ? `shadow-sm ${col.glow} scale-[1.01]` : ''}
                 ${isHovered && isSameCol ? 'opacity-60' : ''}
                 ${isDragging && !isHovered ? 'opacity-70' : ''}
               `}
@@ -489,12 +547,11 @@ export default function Dashboard() {
               aria-label={`${col.label} column - ${colBugs.length} bugs`}
               aria-dropeffect={isDragging ? 'move' : 'none'}>
 
-              {/* Column header */}
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
+                <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                   <span>{col.icon}</span> {col.label}
                 </h3>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-all duration-300 ${isHovered && !isSameCol ? 'bg-white/20 text-white scale-110' : 'bg-white/10 text-slate-400'
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-all duration-300 ${isHovered && !isSameCol ? 'bg-secondary text-secondary-foreground scale-110' : 'bg-background border border-border text-muted-foreground'
                   }`}>{colBugs.length}</span>
               </div>
 
@@ -519,13 +576,13 @@ export default function Dashboard() {
                       onDragEnd={handleDragEnd}
                       onClick={() => navigate(`/bug/${bug.id}`)}
                       onContextMenu={e => handleContextMenu(e, bug)}
-                      className={`p-3 rounded-lg border-l-[3px] transition-all duration-300 group relative
+                      className={`p-3 rounded-md border-l-[3px] transition-all duration-200 group relative
                         ${SEVERITY_BORDER[bug.severity]}
                         ${isBeingDragged
-                          ? 'opacity-30 scale-95 bg-slate-900/30 border-white/5 rotate-1'
+                          ? 'opacity-40 scale-95 bg-background border-border rotate-1'
                           : wasJustDropped
-                            ? 'animate-drop-in bg-slate-900/80 border-white/10 shadow-lg shadow-purple-500/20 ring-2 ring-purple-500/40'
-                            : 'bg-slate-900/60 border-white/5 hover:border-purple-500/30 hover:bg-slate-800/80 hover:shadow-md hover:shadow-purple-500/10 hover:-translate-y-0.5'
+                            ? 'animate-drop-in bg-card border-border shadow-md ring-1 ring-ring'
+                            : 'bg-card border-border hover:border-muted-foreground/30 hover:shadow-sm hover:-translate-y-0.5'
                         }
                         ${userCanDrag && !isGuest ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}
                       `}
@@ -540,12 +597,12 @@ export default function Dashboard() {
 
                       {/* Card content */}
                       <div className="flex items-start justify-between gap-1">
-                        <p className="text-xs text-white font-medium line-clamp-2 group-hover:text-purple-300 transition-colors flex-1">
+                        <p className="text-xs text-foreground font-medium line-clamp-2 transition-colors flex-1">
                           {bug.title}
                         </p>
                         {/* Expand button */}
                         <button onClick={e => toggleExpand(e, bug.id)}
-                          className="p-0.5 text-[10px] text-slate-600 hover:text-white opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                          className="p-0.5 text-[10px] text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                           aria-label={isExpanded ? 'Collapse' : 'Expand preview'}
                           title="Preview">
                           {isExpanded ? '▲' : '▼'}
@@ -554,12 +611,18 @@ export default function Dashboard() {
 
                       {/* Expanded description preview */}
                       {isExpanded && (
-                        <div className="mt-2 pt-2 border-t border-white/5 animate-expand">
-                          <p className="text-[10px] text-slate-400 line-clamp-4 leading-relaxed">{bug.description}</p>
+                        <div className="mt-2 pt-2 border-t border-border animate-expand">
+                          <p className="text-[10px] text-muted-foreground line-clamp-4 leading-relaxed">{bug.description}</p>
+                          {bug.publicImpact && (
+                            <div className="mt-2 p-1.5 bg-blue-500/10 border border-blue-500/20 rounded">
+                              <p className="text-[9px] text-blue-400 font-medium mb-0.5">🌍 Public Impact:</p>
+                              <p className="text-[9px] text-muted-foreground line-clamp-2">{bug.publicImpact}</p>
+                            </div>
+                          )}
                           {bug.tags && bug.tags.length > 0 && (
                             <div className="flex gap-1 mt-1.5 flex-wrap">
                               {bug.tags.map(tag => (
-                                <span key={tag} className="text-[8px] bg-purple-500/15 text-purple-400 px-1.5 py-0.5 rounded-full">{tag}</span>
+                                <span key={tag} className="text-[8px] bg-secondary text-secondary-foreground border border-border px-1.5 py-0.5 rounded-full">{tag}</span>
                               ))}
                             </div>
                           )}
@@ -586,25 +649,25 @@ export default function Dashboard() {
 
                       {/* Assignee */}
                       {bug.assigneeName && (
-                        <div className="flex items-center gap-1 mt-1.5">
-                          <div className="w-4 h-4 rounded-full bg-gradient-to-br from-purple-500 to-indigo-500 flex items-center justify-center text-[7px] text-white font-bold">
+                        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border/50">
+                          <div className="w-4 h-4 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-[7px] text-foreground font-bold">
                             {bug.assigneeName.charAt(0)}
                           </div>
-                          <p className="text-[10px] text-slate-500">{bug.assigneeName}</p>
+                          <p className="text-[10px] text-muted-foreground">{bug.assigneeName}</p>
                         </div>
                       )}
 
                       {/* Drag handle indicator */}
                       {userCanDrag && !isGuest && (
-                        <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-40 transition text-[8px] text-slate-500 select-none pointer-events-none">⠿</div>
+                        <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-40 transition text-[8px] text-muted-foreground select-none pointer-events-none">⠿</div>
                       )}
                     </div>
                   );
                 })}
                 {colBugs.length === 0 && !isHovered && (
                   <div className="text-center py-8">
-                    <p className="text-2xl opacity-20 mb-1">{col.icon}</p>
-                    <p className="text-[10px] text-slate-600">No bugs</p>
+                    <p className="text-2xl opacity-40 mb-1 grayscale">{col.icon}</p>
+                    <p className="text-[10px] text-muted-foreground">No bugs</p>
                   </div>
                 )}
               </div>
@@ -614,11 +677,11 @@ export default function Dashboard() {
       </div>
 
       {/* Team Overview */}
-      <div className="bg-white/5 rounded-xl border border-white/10 p-5">
+      <div className="bg-card rounded-md border border-border p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-white flex items-center gap-2">👥 {t('team', language)}</h3>
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">👥 {t('team', language)}</h3>
           {currentUser?.role === 'admin' && (
-            <Link to="/admin" className="text-xs text-purple-400 hover:text-purple-300 transition">
+            <Link to="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
               {t('manageUsers', language)} →
             </Link>
           )}
@@ -628,22 +691,22 @@ export default function Dashboard() {
             const assigned = bugs.filter(b => b.assigneeId === user.id && b.status !== 'closed');
             const resolved = bugs.filter(b => b.assigneeId === user.id && (b.status === 'resolved' || b.status === 'closed'));
             return (
-              <div key={user.id} className="bg-white/5 rounded-lg p-3 border border-white/5 hover:border-white/10 transition">
+              <div key={user.id} className="bg-background rounded-md p-3 border border-border hover:border-zinc-700 transition-colors">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-lg">{user.avatar}</span>
+                  <span className="text-lg grayscale">{user.avatar}</span>
                   <div>
-                    <p className="text-xs font-medium text-white">{user.name}</p>
-                    <p className="text-[10px] text-slate-500 capitalize">{user.role}</p>
+                    <p className="text-xs font-medium text-foreground leading-tight">{user.name}</p>
+                    <p className="text-[10px] text-muted-foreground capitalize leading-tight">{user.role}</p>
                   </div>
                 </div>
-                <div className="flex items-center justify-between mt-2">
+                <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
                   <div className="text-center">
-                    <p className="text-xs font-bold text-orange-400">{assigned.length}</p>
-                    <p className="text-[9px] text-slate-500">{t('open', language)}</p>
+                    <p className="text-xs font-bold text-foreground">{assigned.length}</p>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{t('open', language)}</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs font-bold text-green-400">{resolved.length}</p>
-                    <p className="text-[9px] text-slate-500">{t('resolved', language)}</p>
+                    <p className="text-xs font-bold text-foreground">{resolved.length}</p>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{t('resolved', language)}</p>
                   </div>
                 </div>
               </div>
@@ -655,30 +718,30 @@ export default function Dashboard() {
       {/* My Stats (if logged in) */}
       {currentUser && !isGuest && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-gradient-to-br from-orange-500/10 to-red-500/10 rounded-xl border border-orange-500/20 p-4">
+          <div className="bg-card rounded-md border border-border p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-lg">📋</span>
-              <h4 className="text-sm font-semibold text-white">{t('myAssignedBugs', language)}</h4>
+              <span className="text-sm grayscale">📋</span>
+              <h4 className="text-sm font-semibold text-foreground">{t('myAssignedBugs', language)}</h4>
             </div>
-            <p className="text-2xl font-bold text-orange-400">
+            <p className="text-2xl font-bold text-foreground">
               {bugs.filter(b => b.assigneeId === currentUser.id && b.status !== 'closed').length}
             </p>
           </div>
-          <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-xl border border-green-500/20 p-4">
+          <div className="bg-card rounded-md border border-border p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-lg">✅</span>
-              <h4 className="text-sm font-semibold text-white">{t('resolvedBugs', language)}</h4>
+              <span className="text-sm grayscale">✅</span>
+              <h4 className="text-sm font-semibold text-foreground">{t('resolvedBugs', language)}</h4>
             </div>
-            <p className="text-2xl font-bold text-green-400">
+            <p className="text-2xl font-bold text-foreground">
               {bugs.filter(b => b.assigneeId === currentUser.id && (b.status === 'resolved' || b.status === 'closed')).length}
             </p>
           </div>
-          <div className="bg-gradient-to-br from-purple-500/10 to-indigo-500/10 rounded-xl border border-purple-500/20 p-4">
+          <div className="bg-card rounded-md border border-border p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-lg">🐛</span>
-              <h4 className="text-sm font-semibold text-white">{t('reportedByMe', language)}</h4>
+              <span className="text-sm grayscale">🐛</span>
+              <h4 className="text-sm font-semibold text-foreground">{t('reportedByMe', language)}</h4>
             </div>
-            <p className="text-2xl font-bold text-purple-400">
+            <p className="text-2xl font-bold text-foreground">
               {bugs.filter(b => b.reporterId === currentUser.id).length}
             </p>
           </div>

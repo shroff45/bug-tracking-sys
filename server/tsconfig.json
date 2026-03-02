@@ -35,5 +35,10 @@
     "isolatedModules": true,
     "noUncheckedSideEffectImports": true,
     "skipLibCheck": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "tmp",
+    "dist"
+  ]
 }

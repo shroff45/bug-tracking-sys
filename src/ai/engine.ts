@@ -4,15 +4,21 @@ import type { Bug, Severity, DuplicateResult, SeverityPrediction, AIModelMetrics
 // DEEP LEARNING ENGINE - NLP-based Bug Analysis
 // Implements: TF-IDF, Cosine Similarity, Softmax Classifier,
 // Word Embeddings, Neural Network Simulation
+// 
+// Why this code/type is used:
+// - Object-Oriented Design (Classes): Encapsulates ML components (TFIDFVectorizer, SeverityClassifier) and maintains state (model weights, vocabulary).
+// - Map/Set: Provides O(1) lookups for dense structures like vocabulary indexes and stopword filtering.
+// - Pure TS Math: Implements native mathematical matrices to calculate similarities and activate neural layers directly in the browser (eliminating Python backend dependencies).
 // ============================================================
 
-// --- Text Preprocessing ---
+// --- Text Preprocessing Pipeline ---
+// Normalizes and prepares raw text for vectorization
 function tokenize(text: string): string[] {
   return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 1);
+    .toLowerCase() // Case insensitive
+    .replace(/[^a-z0-9\s]/g, ' ') // Strip punctuation
+    .split(/\s+/) // Split on whitespace
+    .filter(t => t.length > 1); // Discard isolated chars
 }
 
 const STOP_WORDS = new Set([
@@ -53,45 +59,52 @@ function stem(word: string): string {
   return w.length > 2 ? w : word;
 }
 
+// Functional chain to completely digest text to stem words
 function preprocess(text: string): string[] {
   return removeStopWords(tokenize(text)).map(stem);
 }
 
 // --- TF-IDF Vectorizer ---
+// Assigns weight to tokens based on frequency locally but penalizes if highly frequent globally
 class TFIDFVectorizer {
-  private vocabulary: Map<string, number> = new Map();
-  private idf: Map<string, number> = new Map();
+  private vocabulary: Map<string, number> = new Map(); // Global mapping
+  private idf: Map<string, number> = new Map(); // Inverse Document Frequency table
+
+  // Trains the vectorizer on a corpus explicitly
   fit(documents: string[][]): void {
     const vocabSet = new Set<string>();
     documents.forEach(doc => doc.forEach(t => vocabSet.add(t)));
-    
+
     let idx = 0;
     vocabSet.forEach(word => {
       this.vocabulary.set(word, idx++);
     });
 
-    // Calculate IDF
+    // Calculate IDF (Penalize common words across the entire project corpus)
     const N = documents.length;
     vocabSet.forEach(word => {
       const df = documents.filter(doc => doc.includes(word)).length;
-      this.idf.set(word, Math.log((N + 1) / (df + 1)) + 1);
+      this.idf.set(word, Math.log((N + 1) / (df + 1)) + 1); // Smooth log idf
     });
   }
 
+  // Translates incoming bugs into fixed-length numeric vectors against defined vocabulary
   transform(tokens: string[]): number[] {
     const vector = new Array(this.vocabulary.size).fill(0);
     const tf = new Map<string, number>();
-    
+
+    // Count Term Frequency
     tokens.forEach(t => {
       tf.set(t, (tf.get(t) || 0) + 1);
     });
 
+    // Apply TF-IDF formula
     tf.forEach((count, word) => {
       const idx = this.vocabulary.get(word);
       if (idx !== undefined) {
         const termFreq = count / tokens.length;
         const idfVal = this.idf.get(word) || 1;
-        vector[idx] = termFreq * idfVal;
+        vector[idx] = termFreq * idfVal; // Weighted relevance score
       }
     });
 
@@ -105,7 +118,7 @@ class TFIDFVectorizer {
   getTopFeatures(tokens: string[], n: number = 5): string[] {
     const tf = new Map<string, number>();
     tokens.forEach(t => tf.set(t, (tf.get(t) || 0) + 1));
-    
+
     const scored: [string, number][] = [];
     tf.forEach((count, word) => {
       const idfVal = this.idf.get(word) || 0;
@@ -113,7 +126,7 @@ class TFIDFVectorizer {
         scored.push([word, (count / tokens.length) * idfVal]);
       }
     });
-    
+
     return scored
       .sort((a, b) => b[1] - a[1])
       .slice(0, n)
@@ -121,7 +134,9 @@ class TFIDFVectorizer {
   }
 }
 
-// --- Vector Math ---
+// --- Vector Math Algorithms ---
+// Mathematical foundations for ML operations
+
 function dotProduct(a: number[], b: number[]): number {
   let sum = 0;
   const len = Math.min(a.length, b.length);
@@ -135,6 +150,8 @@ function magnitude(v: number[]): number {
   return Math.sqrt(sum);
 }
 
+// Determines the inner angle between two dataset vectors
+// Output bound 0.0 to 1.0 (Higher -> more similar)
 function cosineSimilarity(a: number[], b: number[]): number {
   const dot = dotProduct(a, b);
   const magA = magnitude(a);
@@ -143,15 +160,17 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (magA * magB);
 }
 
-// --- Softmax Function ---
+// --- Softmax Activation Function ---
+// Normalizes raw neural network logits into a probability distribution summing sequentially to 1.
 function softmax(logits: number[]): number[] {
-  const maxLogit = Math.max(...logits);
-  const exps = logits.map(l => Math.exp(l - maxLogit));
+  const maxLogit = Math.max(...logits); // Max prevention scales for numerical stability
+  const exps = logits.map(l => Math.exp(l - maxLogit)); // Exponentiate to isolate
   const sumExps = exps.reduce((a, b) => a + b, 0);
-  return exps.map(e => e / sumExps);
+  return exps.map(e => e / sumExps); // Normalize to percentage logic
 }
 
 // --- ReLU Activation ---
+// Rectified Linear Unit clamps negative matrices out
 function relu(x: number): number {
   return Math.max(0, x);
 }
@@ -201,7 +220,7 @@ class SeverityClassifier {
   // Hidden to output weights (hidden_units x 4_classes)
   private weights2: number[][] = [];
   private bias2: number[] = [];
-  
+
   private hiddenSize = 16;
   private inputSize = 4; // 4 severity categories as feature groups
 
@@ -264,6 +283,7 @@ class SeverityClassifier {
     }
   }
 
+  // Performs extraction and dimensional mapping against preset category boundaries
   private extractFeatures(tokens: string[]): number[] {
     const severities: Severity[] = ['critical', 'high', 'medium', 'low'];
     return severities.map(sev => {
@@ -272,7 +292,7 @@ class SeverityClassifier {
       tokens.forEach(token => {
         keywords.forEach(kw => {
           if (token.includes(kw) || kw.includes(token)) {
-            score += 1;
+            score += 1; // Arbitrary score weighting system based purely on keyword density
           }
         });
       });
@@ -304,20 +324,21 @@ class SeverityClassifier {
       logits[j] = sum;
     }
 
-    // Add bias based on text length and content
-    if (text.length > 200) logits[0] += 0.3; // Longer descriptions often more severe
-    if (text.includes('!')) logits[0] += 0.2;
-    if (text.includes('?')) logits[2] += 0.1;
+    // Add empirical contextual biases
+    if (text.length > 200) logits[0] += 0.3; // Longer descriptions often indicate more severe technical detail
+    if (text.includes('!')) logits[0] += 0.2; // Escalation syntax
+    if (text.includes('?')) logits[2] += 0.1; // Passive interrogative syntax aligns with medium uncertainty
 
-    const probabilities = softmax(logits);
+    const probabilities = softmax(logits); // Convert arbitrary output scores securely mapped probability scale
     const severities: Severity[] = ['critical', 'high', 'medium', 'low'];
-    
+
+    // Determine strict highest value string target
     const maxIdx = probabilities.indexOf(Math.max(...probabilities));
     const topFeatures = tokens.filter(t => {
-      return severities.some(sev => 
+      return severities.some(sev =>
         this.severityFeatures[sev].some(kw => t.includes(kw) || kw.includes(t))
       );
-    }).slice(0, 5);
+    }).slice(0, 5); // Return bounding insight text string explaining inference to UI
 
     return {
       severity: severities[maxIdx],
@@ -406,12 +427,15 @@ class WordEmbeddings {
 }
 
 // ============================================================
-// Main AI Engine Class
+// Main AI Engine Class facade
+// Exposes abstract endpoints to React while hiding underlying ML pipelines
 // ============================================================
 export class AIEngine {
-  private tfidf: TFIDFVectorizer;
-  private classifier: SeverityClassifier;
-  private wordEmb: WordEmbeddings;
+  private tfidf: TFIDFVectorizer; // NLP Term logic matrix solver
+  private classifier: SeverityClassifier; // Sim Neural Net weighting logic
+  private wordEmb: WordEmbeddings; // Semantical distance solver
+
+  // Storage layer for active dataset caching
   private bugVectors: Map<string, number[]> = new Map();
   private bugEmbeddings: Map<string, number[]> = new Map();
   private metrics: AIModelMetrics;
@@ -442,17 +466,18 @@ export class AIEngine {
     };
   }
 
-  // Index existing bugs for duplicate detection
+  // Index existing bugs for duplicate detection using both TF-IDF weighting and Embeddings
   indexBugs(bugs: Bug[]): void {
     const allTokens = bugs.map(b => preprocess(b.title + ' ' + b.description));
     if (allTokens.length === 0) return;
-    
-    this.tfidf.fit(allTokens);
-    
+
+    this.tfidf.fit(allTokens); // Hydrate primary matrix properties
+
+    // Hash local computations statically to avoid re-evaluation on each keystroke
     bugs.forEach((bug, i) => {
       const tfidfVec = this.tfidf.transform(allTokens[i]);
       this.bugVectors.set(bug.id, tfidfVec);
-      
+
       const embVec = this.wordEmb.getSentenceEmbedding(allTokens[i]);
       this.bugEmbeddings.set(bug.id, embVec);
     });
@@ -461,7 +486,7 @@ export class AIEngine {
   // Detect duplicates using both TF-IDF cosine similarity and embedding similarity
   detectDuplicates(title: string, description: string, bugs: Bug[], threshold: number = 0.25): DuplicateResult[] {
     this.indexBugs(bugs);
-    
+
     const queryTokens = preprocess(title + ' ' + description);
     if (queryTokens.length === 0) return [];
 
@@ -473,37 +498,38 @@ export class AIEngine {
     bugs.forEach(bug => {
       const tfidfVec = this.bugVectors.get(bug.id);
       const embVec = this.bugEmbeddings.get(bug.id);
-      
+
       if (!tfidfVec || !embVec) return;
 
       const tfidfSim = cosineSimilarity(queryTfidf, tfidfVec);
       const embSim = cosineSimilarity(queryEmb, embVec);
 
-      // Ensemble: weighted average of both methods
+      // Ensemble Scoring System: Blends semantic layout tracking (60%) with abstract distance logic (40%)
       const combinedScore = tfidfSim * 0.6 + embSim * 0.4;
 
       if (combinedScore > threshold) {
         let method = 'Ensemble (TF-IDF + Embeddings)';
+        // Reverse deduction labeling logic to explain to the UI which factor tipped the equation
         if (tfidfSim > embSim * 1.5) method = 'TF-IDF Cosine Similarity';
         else if (embSim > tfidfSim * 1.5) method = 'Semantic Embedding Similarity';
 
         results.push({
           bugId: bug.id,
           bugTitle: bug.title,
-          score: Math.min(combinedScore * 1.2, 0.99), // Scale up slightly
+          score: Math.min(combinedScore * 1.2, 0.99), // Scale up slightly for UI interpretation logic
           method,
         });
       }
     });
 
-    return results.sort((a, b) => b.score - a.score).slice(0, 5);
+    return results.sort((a, b) => b.score - a.score).slice(0, 5); // Deliver strict top 5 ceiling
   }
 
   // Predict severity using neural network classifier
   predictSeverity(title: string, description: string): SeverityPrediction {
     const fullText = title + ' ' + description;
     const prediction = this.classifier.predict(fullText);
-    
+
     this.metrics.totalPredictions++;
     // Simulate some correct predictions for accuracy tracking
     if (Math.random() < this.metrics.accuracy) {
@@ -536,14 +562,14 @@ export class AIEngine {
 
     for (let e = 0; e < totalEpochs; e++) {
       await new Promise(resolve => setTimeout(resolve, 300));
-      
+
       const loss = 2.1 * Math.exp(-0.15 * e) + 0.18 + (Math.random() - 0.5) * 0.05;
       const acc = 0.85 * (1 - Math.exp(-0.2 * e)) + 0.15 + (Math.random() - 0.5) * 0.02;
-      
+
       this.metrics.trainingLoss.push(loss);
       this.metrics.trainingAccuracy.push(Math.min(acc, 0.95));
       this.metrics.epoch = e + 1;
-      
+
       onProgress(e + 1, loss, Math.min(acc, 0.95));
     }
 

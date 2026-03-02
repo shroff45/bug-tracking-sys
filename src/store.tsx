@@ -1,42 +1,75 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import type { User, Bug, Project, Notification, Role, BugStatus, Comment, Attachment, Session, Language } from './types';
-import { simpleHash, verifyHash, generateToken } from './types';
+/**
+ * src/store.tsx
+ * 
+ * GLOBAL STATE MANAGEMENT (React Context API)
+ * 
+ * This file acts as the single source of truth for the entire frontend application's data.
+ * Instead of passing props down multiple levels (prop-drilling), any component can call 
+ * `useAppContext()` to access users, bugs, projects, and the active session.
+ * 
+ * How it works:
+ * 1. It holds the React State for data arrays (bugs: [], users: [], etc.)
+ * 2. It exposes "Action Functions" (e.g., addBug, login, changeBugStatus)
+ * 3. These action functions first make an Async API call to the backend (via api/index.ts)
+ * 4. Once the backend confirms the change, the action function calls `fetchBugs()` or 
+ *    equivalent to re-download the latest truth from the database, instantly updating the UI.
+ * 
+ * Persistence:
+ * The user's active login token and language preferences are cached in `localStorage`
+ * so they don't get logged out if they refresh the page.
+ * 
+ * Why this code/type is used:
+ * - createContext/useContext: Native React API for providing global state without external libraries like Redux.
+ * - useState/useEffect/useCallback: Core hooks for managing internal context state and memoizing heavy action functions.
+ * - UUID (v4): Used strictly for generating temporary local IDs (e.g., mock notifications) before backend sync.
+ */
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'; // React API
+import { v4 as uuidv4 } from 'uuid'; // Unique ID generator
+import type { User, Bug, Project, Notification, Role, BugStatus, Attachment, Session, Language } from './types'; // Domain models
+import { generateToken } from './types'; // Legacy mock token generator
+import * as api from './api'; // Backend API communication layer
 
+/**
+ * AppState: Defines the shape of the domain data held in memory.
+ */
 interface AppState {
-  currentUser: User | null;
-  session: Session | null;
-  users: User[];
-  bugs: Bug[];
-  projects: Project[];
-  notifications: Notification[];
-  language: Language;
+  currentUser: User | null; // Logged-in user profile
+  session: Session | null; // Active JWT tracking
+  users: User[]; // All registered users
+  bugs: Bug[]; // All system bugs
+  projects: Project[]; // All tracked projects
+  notifications: Notification[]; // Global alert feed
+  language: Language; // Active UI locale setting
 }
 
+/**
+ * AppContextType: Extends AppState with the callable mutation functions exposed to consumers.
+ */
 interface AppContextType extends AppState {
-  login: (email: string, password: string) => boolean;
+  login: (email: string, password: string) => Promise<boolean>;
+  loginWithGoogle: (credential: string) => Promise<boolean>;
   loginAsGuest: () => void;
-  register: (name: string, email: string, password: string, role: Role) => boolean;
+  register: (name: string, email: string, password: string, role: Role) => Promise<boolean>;
   verifyEmail: (userId: string) => void;
   logout: () => void;
   resetPassword: (email: string) => boolean;
-  addBug: (bug: Omit<Bug, 'id' | 'createdAt' | 'updatedAt' | 'statusHistory' | 'comments' | 'aiAnalyzed' | 'attachments'>) => Bug;
-  updateBug: (id: string, updates: Partial<Bug>) => void;
-  changeBugStatus: (bugId: string, newStatus: BugStatus) => void;
-  assignBug: (bugId: string, userId: string) => void;
-  addComment: (bugId: string, text: string) => void;
-  addAttachment: (bugId: string, attachment: Omit<Attachment, 'id' | 'createdAt'>) => void;
+  addBug: (bug: Omit<Bug, 'id' | 'createdAt' | 'updatedAt' | 'statusHistory' | 'comments' | 'aiAnalyzed' | 'attachments'>) => Promise<Bug | undefined>;
+  updateBug: (id: string, updates: Partial<Bug>) => Promise<void>;
+  changeBugStatus: (bugId: string, newStatus: BugStatus) => Promise<void>;
+  assignBug: (bugId: string, userId: string) => Promise<void>;
+  addComment: (bugId: string, text: string) => Promise<void>;
+  addAttachment: (bugId: string, attachment: Omit<Attachment, 'id' | 'createdAt'>) => Promise<void>;
   fetchProjects: () => Promise<void>;
   fetchBugs: () => Promise<void>;
   analyzeProject: (id: string) => Promise<void>;
   addProject: (name: string, description: string, repoUrl?: string) => Promise<Project | undefined>;
-  updateProject: (id: string, updates: Partial<Project>) => void;
-  deleteProject: (id: string) => void;
-  updateUserRole: (userId: string, role: Role) => void;
-  deleteUser: (userId: string) => void;
+  updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
+  deleteProject: (id: string) => Promise<void>;
+  updateUserRole: (userId: string, role: Role) => Promise<void>;
+  deleteUser: (userId: string) => Promise<void>;
   addNotification: (userId: string, message: string, type: Notification['type'], bugId?: string) => void;
-  markNotificationRead: (id: string) => void;
-  markAllNotificationsRead: () => void;
+  markNotificationRead: (id: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
   getBugById: (id: string) => Bug | undefined;
   getUserById: (id: string) => User | undefined;
   setLanguage: (lang: Language) => void;
@@ -47,117 +80,10 @@ interface AppContextType extends AppState {
   getCriticalBugsCount: () => number;
 }
 
+// Local storage key for re-initiating sessions
 const STORAGE_KEY = 'bugtracker_ai_state';
 
-const defaultUsers: User[] = [
-  { id: 'u1', name: 'Admin User', email: 'admin@bugtracker.com', password: 'admin123', role: 'admin', avatar: '👑', emailVerified: true, createdAt: new Date(Date.now() - 30 * 86400000).toISOString() },
-  { id: 'u2', name: 'Jane Developer', email: 'jane@bugtracker.com', password: 'pass123', role: 'developer', avatar: '👩‍💻', emailVerified: true, createdAt: new Date(Date.now() - 25 * 86400000).toISOString() },
-  { id: 'u3', name: 'Bob Tester', email: 'bob@bugtracker.com', password: 'pass123', role: 'tester', avatar: '🔍', emailVerified: true, createdAt: new Date(Date.now() - 20 * 86400000).toISOString() },
-  { id: 'u4', name: 'Alice Dev', email: 'alice@bugtracker.com', password: 'pass123', role: 'developer', avatar: '👩‍🔬', emailVerified: true, createdAt: new Date(Date.now() - 15 * 86400000).toISOString() },
-  { id: 'u5', name: 'Charlie QA', email: 'charlie@bugtracker.com', password: 'pass123', role: 'tester', avatar: '🧪', emailVerified: true, createdAt: new Date(Date.now() - 10 * 86400000).toISOString() },
-];
-
-const defaultProjects: Project[] = [
-  { id: 'p1', name: 'E-Commerce Platform', description: 'Main e-commerce web application', members: ['u1', 'u2', 'u3', 'u4', 'u5'], createdAt: new Date(Date.now() - 30 * 86400000).toISOString() },
-  { id: 'p2', name: 'Mobile App', description: 'iOS and Android mobile application', members: ['u1', 'u4', 'u5'], createdAt: new Date(Date.now() - 20 * 86400000).toISOString() },
-  { id: 'p3', name: 'API Gateway', description: 'Backend API gateway service', members: ['u1', 'u2', 'u3'], createdAt: new Date(Date.now() - 15 * 86400000).toISOString() },
-];
-
-const defaultBugs: Bug[] = [
-  {
-    id: 'b1', title: 'Login page crashes on invalid email format', description: 'When a user enters an email without @ symbol and clicks login, the entire page crashes with a white screen. The application becomes unresponsive and requires a hard refresh.',
-    stepsToReproduce: '1. Go to login page\n2. Enter "testuser" without @\n3. Click Login button\n4. Page crashes', expectedBehavior: 'Should show validation error message', actualBehavior: 'Page crashes with white screen',
-    severity: 'critical', predictedSeverity: 'critical', severityConfidence: 0.92, status: 'open', projectId: 'p1', reporterId: 'u3', reporterName: 'Bob Tester',
-    assigneeId: 'u2', assigneeName: 'Jane Developer', tags: ['login', 'crash', 'validation'], comments: [
-      { id: 'c1', bugId: 'b1', userId: 'u2', userName: 'Jane Developer', text: 'I can reproduce this. The email regex is throwing an unhandled exception.', createdAt: new Date(Date.now() - 4 * 86400000).toISOString() },
-    ],
-    statusHistory: [
-      { from: 'new', to: 'open', userId: 'u1', userName: 'Admin User', timestamp: new Date(Date.now() - 5 * 86400000).toISOString() },
-    ],
-    attachments: [],
-    aiAnalyzed: true, createdAt: new Date(Date.now() - 7 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 4 * 86400000).toISOString(),
-  },
-  {
-    id: 'b2', title: 'Shopping cart total displays wrong currency symbol', description: 'The shopping cart shows $ instead of € for European users. The amount is correct but the currency symbol is always USD regardless of locale settings.',
-    stepsToReproduce: '1. Set locale to EU\n2. Add items to cart\n3. View cart total', expectedBehavior: 'Should display € symbol', actualBehavior: 'Displays $ symbol',
-    severity: 'medium', predictedSeverity: 'medium', severityConfidence: 0.78, status: 'in-progress', projectId: 'p1', reporterId: 'u5', reporterName: 'Charlie QA',
-    assigneeId: 'u4', assigneeName: 'Alice Dev', tags: ['cart', 'i18n', 'display'], comments: [],
-    statusHistory: [
-      { from: 'new', to: 'open', userId: 'u1', userName: 'Admin User', timestamp: new Date(Date.now() - 4 * 86400000).toISOString() },
-      { from: 'open', to: 'in-progress', userId: 'u4', userName: 'Alice Dev', timestamp: new Date(Date.now() - 2 * 86400000).toISOString() },
-    ],
-    attachments: [],
-    aiAnalyzed: true, createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-  },
-  {
-    id: 'b3', title: 'Database connection timeout during peak hours', description: 'The application experiences database connection timeouts when more than 100 concurrent users are active. This causes server errors and data loss for active transactions.',
-    stepsToReproduce: '1. Simulate 100+ concurrent users\n2. Perform database operations\n3. Observe timeout errors', expectedBehavior: 'Database should handle concurrent connections', actualBehavior: 'Connection pool exhausted, timeout errors',
-    severity: 'critical', predictedSeverity: 'critical', severityConfidence: 0.95, status: 'new', projectId: 'p3', reporterId: 'u3', reporterName: 'Bob Tester',
-    tags: ['database', 'performance', 'critical'], comments: [],
-    statusHistory: [],
-    attachments: [],
-    aiAnalyzed: true, createdAt: new Date(Date.now() - 2 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-  },
-  {
-    id: 'b4', title: 'Typo in checkout confirmation message', description: 'The checkout success page shows "Your order has been palced successfully" - "placed" is misspelled as "palced".',
-    stepsToReproduce: '1. Complete checkout\n2. Read confirmation message', expectedBehavior: '"placed" should be spelled correctly', actualBehavior: '"palced" is shown',
-    severity: 'low', predictedSeverity: 'low', severityConfidence: 0.88, status: 'resolved', projectId: 'p1', reporterId: 'u5', reporterName: 'Charlie QA',
-    assigneeId: 'u2', assigneeName: 'Jane Developer', tags: ['typo', 'checkout', 'ui'], comments: [
-      { id: 'c2', bugId: 'b4', userId: 'u2', userName: 'Jane Developer', text: 'Fixed in commit abc123.', createdAt: new Date(Date.now() - 1 * 86400000).toISOString() },
-    ],
-    statusHistory: [
-      { from: 'new', to: 'open', userId: 'u1', userName: 'Admin User', timestamp: new Date(Date.now() - 3 * 86400000).toISOString() },
-      { from: 'open', to: 'in-progress', userId: 'u2', userName: 'Jane Developer', timestamp: new Date(Date.now() - 2 * 86400000).toISOString() },
-      { from: 'in-progress', to: 'resolved', userId: 'u2', userName: 'Jane Developer', timestamp: new Date(Date.now() - 1 * 86400000).toISOString() },
-    ],
-    attachments: [],
-    aiAnalyzed: true, createdAt: new Date(Date.now() - 4 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-  },
-  {
-    id: 'b5', title: 'Mobile app navigation bar overlaps content', description: 'On iOS devices with notch, the bottom navigation bar overlaps with page content making the last item unreadable and untappable.',
-    stepsToReproduce: '1. Open app on iPhone with notch\n2. Navigate to any page with scrollable content\n3. Scroll to bottom', expectedBehavior: 'Content should be visible above nav bar', actualBehavior: 'Nav bar overlaps content',
-    severity: 'high', predictedSeverity: 'high', severityConfidence: 0.82, status: 'open', projectId: 'p2', reporterId: 'u5', reporterName: 'Charlie QA',
-    assigneeId: 'u4', assigneeName: 'Alice Dev', tags: ['mobile', 'ios', 'navigation', 'layout'], comments: [],
-    statusHistory: [
-      { from: 'new', to: 'open', userId: 'u1', userName: 'Admin User', timestamp: new Date(Date.now() - 1 * 86400000).toISOString() },
-    ],
-    attachments: [],
-    aiAnalyzed: true, createdAt: new Date(Date.now() - 3 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-  },
-  {
-    id: 'b6', title: 'API rate limiting not enforced on search endpoint', description: 'The /api/search endpoint does not enforce rate limiting, allowing unlimited requests. This could lead to denial of service attacks and excessive server load.',
-    stepsToReproduce: '1. Send rapid requests to /api/search\n2. Observe no rate limiting headers\n3. Server accepts all requests', expectedBehavior: 'Rate limiting should be enforced (100 req/min)', actualBehavior: 'No rate limiting applied',
-    severity: 'high', predictedSeverity: 'critical', severityConfidence: 0.71, status: 'new', projectId: 'p3', reporterId: 'u3', reporterName: 'Bob Tester',
-    tags: ['security', 'api', 'rate-limiting'], comments: [],
-    statusHistory: [],
-    attachments: [],
-    aiAnalyzed: true, createdAt: new Date(Date.now() - 1 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-  },
-  {
-    id: 'b7', title: 'User profile image upload fails for PNG files over 2MB', description: 'When uploading a PNG file larger than 2MB, the upload silently fails without any error message. JPEG files of the same size work fine.',
-    stepsToReproduce: '1. Go to profile settings\n2. Click upload avatar\n3. Select a PNG > 2MB\n4. Click save', expectedBehavior: 'File should upload or show size limit error', actualBehavior: 'Upload fails silently',
-    severity: 'medium', predictedSeverity: 'medium', severityConfidence: 0.76, status: 'closed', projectId: 'p1', reporterId: 'u3', reporterName: 'Bob Tester',
-    assigneeId: 'u2', assigneeName: 'Jane Developer', tags: ['upload', 'profile', 'image'], comments: [
-      { id: 'c3', bugId: 'b7', userId: 'u2', userName: 'Jane Developer', text: 'Fixed by adding proper file size validation and error messaging.', createdAt: new Date(Date.now() - 6 * 86400000).toISOString() },
-      { id: 'c4', bugId: 'b7', userId: 'u3', userName: 'Bob Tester', text: 'Verified fix. Now shows proper error for files over 5MB.', createdAt: new Date(Date.now() - 5 * 86400000).toISOString() },
-    ],
-    statusHistory: [
-      { from: 'new', to: 'open', userId: 'u1', userName: 'Admin User', timestamp: new Date(Date.now() - 10 * 86400000).toISOString() },
-      { from: 'open', to: 'in-progress', userId: 'u2', userName: 'Jane Developer', timestamp: new Date(Date.now() - 8 * 86400000).toISOString() },
-      { from: 'in-progress', to: 'resolved', userId: 'u2', userName: 'Jane Developer', timestamp: new Date(Date.now() - 6 * 86400000).toISOString() },
-      { from: 'resolved', to: 'closed', userId: 'u3', userName: 'Bob Tester', timestamp: new Date(Date.now() - 5 * 86400000).toISOString() },
-    ],
-    attachments: [],
-    aiAnalyzed: true, createdAt: new Date(Date.now() - 12 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-  },
-];
-
-const defaultNotifications: Notification[] = [
-  { id: 'n1', userId: 'u2', message: 'You have been assigned bug: Login page crashes on invalid email format', type: 'assignment', read: false, bugId: 'b1', createdAt: new Date(Date.now() - 5 * 86400000).toISOString() },
-  { id: 'n2', userId: 'u4', message: 'Bug "Shopping cart total displays wrong currency" moved to In Progress', type: 'status', read: true, bugId: 'b2', createdAt: new Date(Date.now() - 2 * 86400000).toISOString() },
-  { id: 'n3', userId: 'u1', message: 'AI Engine detected potential duplicate bugs', type: 'ai', read: false, createdAt: new Date(Date.now() - 1 * 86400000).toISOString() },
-];
-
+// Bootstrap helper: Pulls session data from localStorage on initial render to prevent login flashes
 function loadState(): AppState {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -166,10 +92,10 @@ function loadState(): AppState {
       return {
         currentUser: parsed.currentUser || null,
         session: parsed.session || null,
-        users: parsed.users || defaultUsers,
-        bugs: (parsed.bugs || defaultBugs).map((b: Bug) => ({ ...b, attachments: b.attachments || [] })),
-        projects: parsed.projects || defaultProjects,
-        notifications: parsed.notifications || defaultNotifications,
+        users: [],
+        bugs: [],
+        projects: [],
+        notifications: [],
         language: parsed.language || 'en',
       };
     }
@@ -177,39 +103,140 @@ function loadState(): AppState {
   return {
     currentUser: null,
     session: null,
-    users: defaultUsers,
+    users: [],
     bugs: [],
     projects: [],
-    notifications: defaultNotifications,
-    language: 'en',
+    notifications: [],
+    language: 'en', // Default locale fallback
   };
 }
 
+// Instantiate the React Context
 const AppContext = createContext<AppContextType | null>(null);
 
+// Custom Hook mapping for deep consumer access
 export function useAppContext(): AppContextType {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useAppContext must be used within AppProvider');
   return ctx;
 }
 
+// Highest-level wrapper component that provides value to the component tree
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  // Primary state machine
   const [state, setState] = useState<AppState>(loadState);
 
+  // Effect: Sync volatile preferences to localStorage strictly on change
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      currentUser: state.currentUser,
+      session: state.session,
+      language: state.language
+    }));
+  }, [state.currentUser, state.session, state.language]);
 
-  const login = useCallback((email: string, password: string): boolean => {
-    const user = state.users.find(u => u.email === email && (verifyHash(password, u.password) || u.password === password));
-    if (user) {
-      const session = generateToken(user.id);
-      setState(s => ({ ...s, currentUser: user, session }));
-      return true;
+  // Async API Dispatchers (Fetching)
+
+  // Fetch full user roster
+  const fetchUsers = useCallback(async () => {
+    try {
+      const users = await api.fetchUsers();
+      setState(s => ({ ...s, users }));
+    } catch (e) { console.error("Could not fetch users", e); }
+  }, []);
+
+  // Fetch active projects
+  const fetchProjects = useCallback(async () => {
+    try {
+      const projects = await api.fetchProjects();
+      setState(s => ({ ...s, projects }));
+    } catch (e) { console.error('Failed to fetch projects', e); }
+  }, []);
+
+  // Fetch and deeply parse bug entities (JSON string arrays -> Arrays)
+  const fetchBugs = useCallback(async () => {
+    try {
+      const data = await api.fetchBugs();
+      const serializedBugs = data.map((b: any) => ({
+        ...b,
+        // Tags arrive as JSON strings from SQLite adapter, parse defensively
+        tags: b.tags ? (typeof b.tags === 'string' ? JSON.parse(b.tags) : b.tags) : [],
+        comments: b.comments || [],
+        attachments: b.attachments || [],
+        statusHistory: b.statusHistory || [],
+        aiAnalyzed: Boolean(b.aiAnalyzed)
+      }));
+      setState(s => ({ ...s, bugs: serializedBugs }));
+    } catch (e) {
+      console.error('Failed to fetch bugs', e);
     }
-    return false;
-  }, [state.users]);
+  }, []);
 
+  // Fetch user-directed notifications array
+  const fetchNotifications = useCallback(async (userId: string) => {
+    try {
+      const notifications = await api.fetchNotifications(userId);
+      setState(s => ({ ...s, notifications }));
+    } catch (e) { console.error('Failed to fetch notifications', e); }
+  }, []);
+
+  // Effect: Hydration. Runs once when auth dictates it's safe to load domain data.
+  useEffect(() => {
+    fetchUsers();
+    fetchProjects();
+    fetchBugs();
+    // Only fetch notifs if explicitly logged in and NOT operating as a dummy guest
+    if (state.currentUser && !isGuest) {
+      fetchNotifications(state.currentUser.id);
+    }
+  }, [state.currentUser]);
+
+
+  // Async API Dispatchers (Mutations)
+
+  // Standard authentication pipeline
+  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+    try {
+      const response = await api.loginUser(email, password);
+      if (response && response.user && response.token) {
+        const sessionObj = {
+          token: response.token,
+          userId: response.user.id,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          createdAt: new Date().toISOString()
+        };
+        setState(s => ({ ...s, currentUser: response.user, session: sessionObj }));
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error("Login Error:", e);
+      return false;
+    }
+  }, []);
+
+  // OAuth authentication wrapper targeting Google identity
+  const loginWithGoogle = useCallback(async (credential: string): Promise<boolean> => {
+    try {
+      const response = await api.loginWithGoogle(credential);
+      if (response && response.user && response.token) {
+        const sessionObj = {
+          token: response.token,
+          userId: response.user.id,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          createdAt: new Date().toISOString()
+        };
+        setState(s => ({ ...s, currentUser: response.user, session: sessionObj }));
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error("Google Login Error:", e);
+      return false;
+    }
+  }, []);
+
+  // Syntactic sugar action to mock a read-only unprivileged identity
   const loginAsGuest = useCallback(() => {
     const guestUser: User = {
       id: 'guest-' + uuidv4().slice(0, 8),
@@ -225,228 +252,118 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, currentUser: guestUser, session }));
   }, []);
 
-  const register = useCallback((name: string, email: string, password: string, role: Role): boolean => {
-    if (state.users.some(u => u.email === email)) return false;
-    const avatars = ['😀', '🧑‍💼', '🧑‍🔧', '🧑‍🎓', '🦸', '🧙', '🤖'];
-    const hashedPassword = simpleHash(password);
-    const newUser: User = {
-      id: uuidv4(), name, email, password: hashedPassword, role,
-      avatar: avatars[Math.floor(Math.random() * avatars.length)],
-      emailVerified: false,
-      createdAt: new Date().toISOString(),
-    };
-    const session = generateToken(newUser.id);
-    setState(s => ({ ...s, users: [...s.users, newUser], currentUser: newUser, session }));
-    return true;
-  }, [state.users]);
+  // Standard account creation pipeline
+  const register = useCallback(async (name: string, email: string, password: string, role: Role): Promise<boolean> => {
+    try {
+      const response = await api.registerUser(name, email, password, role);
+      if (response && response.user && response.token) {
+        const sessionObj = {
+          token: response.token,
+          userId: response.user.id,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          createdAt: new Date().toISOString()
+        };
+        setState(s => ({ ...s, currentUser: response.user, session: sessionObj }));
+        await fetchUsers(); // Refresh consumer user list to include the newly created user
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error("Register Error:", e);
+      return false;
+    }
+  }, [fetchUsers]);
 
   const verifyEmail = useCallback((userId: string) => {
+    // Local mock logic for now unless explicitly wired to backend validator
     setState(s => ({
       ...s,
-      users: s.users.map(u => u.id === userId ? { ...u, emailVerified: true } : u),
       currentUser: s.currentUser?.id === userId ? { ...s.currentUser, emailVerified: true } : s.currentUser,
     }));
   }, []);
 
+  // Hard clears active auth session and associated user caches
   const logout = useCallback(() => {
-    setState(s => ({ ...s, currentUser: null, session: null }));
+    setState(s => ({ ...s, currentUser: null, session: null, notifications: [] }));
   }, []);
 
   const resetPassword = useCallback((email: string): boolean => {
-    const user = state.users.find(u => u.email === email);
-    return !!user;
+    // Mock logic for UI testing capabilities
+    return !!state.users.find(u => u.email === email);
   }, [state.users]);
 
-  const addBug = useCallback((bugData: Omit<Bug, 'id' | 'createdAt' | 'updatedAt' | 'statusHistory' | 'comments' | 'aiAnalyzed' | 'attachments'>): Bug => {
-    const now = new Date().toISOString();
-    const bug: Bug = {
-      ...bugData,
-      id: uuidv4(),
-      comments: [],
-      statusHistory: [],
-      attachments: [],
-      aiAnalyzed: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-    setState(s => ({ ...s, bugs: [...s.bugs, bug] }));
-    return bug;
-  }, []);
-
-  const updateBug = useCallback((id: string, updates: Partial<Bug>) => {
-    setState(s => ({
-      ...s,
-      bugs: s.bugs.map(b => b.id === id ? { ...b, ...updates, updatedAt: new Date().toISOString() } : b),
-    }));
-  }, []);
-
-  const changeBugStatus = useCallback((bugId: string, newStatus: BugStatus) => {
-    setState(s => {
-      const bug = s.bugs.find(b => b.id === bugId);
-      if (!bug || !s.currentUser) return s;
-      const change = {
-        from: bug.status,
-        to: newStatus,
-        userId: s.currentUser.id,
-        userName: s.currentUser.name,
-        timestamp: new Date().toISOString(),
-      };
-      const updatedBugs = s.bugs.map(b =>
-        b.id === bugId ? { ...b, status: newStatus, statusHistory: [...b.statusHistory, change], updatedAt: new Date().toISOString() } : b
-      );
-      const newNotif: Notification = {
-        id: uuidv4(),
-        userId: bug.assigneeId || bug.reporterId,
-        message: `Bug "${bug.title}" status changed to ${newStatus}`,
-        type: 'status',
-        read: false,
-        bugId,
-        createdAt: new Date().toISOString(),
-      };
-      return { ...s, bugs: updatedBugs, notifications: [...s.notifications, newNotif] };
-    });
-  }, []);
-
-  const assignBug = useCallback((bugId: string, userId: string) => {
-    setState(s => {
-      const user = s.users.find(u => u.id === userId);
-      if (!user) return s;
-      const bug = s.bugs.find(b => b.id === bugId);
-      const updatedBugs = s.bugs.map(b =>
-        b.id === bugId ? { ...b, assigneeId: userId, assigneeName: user.name, updatedAt: new Date().toISOString() } : b
-      );
-      const newNotif: Notification = {
-        id: uuidv4(),
-        userId,
-        message: `You have been assigned bug: ${bug?.title || bugId}`,
-        type: 'assignment',
-        read: false,
-        bugId,
-        createdAt: new Date().toISOString(),
-      };
-      return { ...s, bugs: updatedBugs, notifications: [...s.notifications, newNotif] };
-    });
-  }, []);
-
-  // New: Get bugs assigned to current user
-  const getMyAssignedBugs = useCallback((userId: string) => {
-    return state.bugs.filter(b => b.assigneeId === userId && b.status !== 'closed');
-  }, [state.bugs]);
-
-  // New: Get bugs reported by user
-  const getBugsReportedByMe = useCallback((userId: string) => {
-    return state.bugs.filter(b => b.reporterId === userId);
-  }, [state.bugs]);
-
-  // New: Get open bugs count
-  const getOpenBugsCount = useCallback(() => {
-    return state.bugs.filter(b => b.status === 'new' || b.status === 'open').length;
-  }, [state.bugs]);
-
-  // New: Get critical bugs count
-  const getCriticalBugsCount = useCallback(() => {
-    return state.bugs.filter(b => b.severity === 'critical' && b.status !== 'closed').length;
-  }, [state.bugs]);
-
-  const addComment = useCallback((bugId: string, text: string) => {
-    setState(s => {
-      if (!s.currentUser) return s;
-      const comment: Comment = {
-        id: uuidv4(),
-        bugId,
-        userId: s.currentUser.id,
-        userName: s.currentUser.name,
-        text,
-        createdAt: new Date().toISOString(),
-      };
-      const bug = s.bugs.find(b => b.id === bugId);
-      const updatedBugs = s.bugs.map(b =>
-        b.id === bugId ? { ...b, comments: [...b.comments, comment], updatedAt: new Date().toISOString() } : b
-      );
-      const notifTargets = new Set<string>();
-      if (bug?.reporterId && bug.reporterId !== s.currentUser.id) notifTargets.add(bug.reporterId);
-      if (bug?.assigneeId && bug.assigneeId !== s.currentUser.id) notifTargets.add(bug.assigneeId);
-      const newNotifs: Notification[] = Array.from(notifTargets).map(uid => ({
-        id: uuidv4(),
-        userId: uid,
-        message: `${s.currentUser!.name} commented on "${bug?.title}"`,
-        type: 'comment' as const,
-        read: false,
-        bugId,
-        createdAt: new Date().toISOString(),
-      }));
-      return { ...s, bugs: updatedBugs, notifications: [...s.notifications, ...newNotifs] };
-    });
-  }, []);
-
-  const addAttachment = useCallback((bugId: string, attachmentData: Omit<Attachment, 'id' | 'createdAt'>) => {
-    setState(s => {
-      const attachment: Attachment = {
-        ...attachmentData,
-        id: uuidv4(),
-        createdAt: new Date().toISOString(),
-      };
-      const updatedBugs = s.bugs.map(b =>
-        b.id === bugId ? { ...b, attachments: [...b.attachments, attachment], updatedAt: new Date().toISOString() } : b
-      );
-      return { ...s, bugs: updatedBugs };
-    });
-  }, []);
-
-  const fetchProjects = useCallback(async () => {
+  // Issue tracking pipelines
+  const addBug = useCallback(async (bugData: Omit<Bug, 'id' | 'createdAt' | 'updatedAt' | 'statusHistory' | 'comments' | 'aiAnalyzed' | 'attachments'>): Promise<Bug | undefined> => {
     try {
-      const res = await fetch('/api/projects');
-      if (res.ok) {
-        const data = await res.json();
-        setState(s => ({ ...s, projects: data }));
+      const newBug = await api.createBug(bugData);
+      if (newBug) {
+        await fetchBugs(); // Sync immediately so kanban reflects push
+        return newBug;
       }
     } catch (e) {
-      console.error('Failed to fetch projects', e);
+      console.error("Failed adding bug", e);
     }
-  }, []);
+    return undefined;
+  }, [fetchBugs]);
 
-  const fetchBugs = useCallback(async () => {
+  const updateBug = useCallback(async (id: string, updates: Partial<Bug>) => {
     try {
-      const res = await fetch('/api/bugs');
-      if (res.ok) {
-        const data = await res.json();
-        const serializedBugs = data.map((b: Record<string, unknown>) => ({
-          ...b,
-          tags: b.tags ? JSON.parse(b.tags as string) : [],
-          comments: b.comments ? JSON.parse(b.comments as string) : [],
-          attachments: b.attachments ? JSON.parse(b.attachments as string) : [],
-          statusHistory: b.statusHistory ? JSON.parse(b.statusHistory as string) : [],
-        }));
-        setState(s => ({ ...s, bugs: serializedBugs }));
-      }
-    } catch (e) {
-      console.error('Failed to fetch bugs', e);
-    }
-  }, []);
+      await api.updateBug(id, updates);
+      await fetchBugs(); // Force refresh to map complex relations
+    } catch (e) { console.error("Failed updateBug", e); }
+  }, [fetchBugs]);
 
-  useEffect(() => {
-    fetchProjects();
-    fetchBugs();
-  }, [fetchProjects, fetchBugs]);
+  // Updates column placement + history tracking securely
+  const changeBugStatus = useCallback(async (bugId: string, newStatus: BugStatus) => {
+    if (!state.currentUser) return;
+    try {
+      await api.changeBugStatus(bugId, newStatus, state.currentUser.id, state.currentUser.name);
+      await fetchBugs(); // Trigger reactive pipeline to update drag zones
+      await fetchNotifications(state.currentUser.id); // Reload notices to get history log
+    } catch (e) { console.error("Failed changeBugStatus", e); }
+  }, [state.currentUser, fetchBugs, fetchNotifications]);
+
+  const assignBug = useCallback(async (bugId: string, userId: string) => {
+    try {
+      const assignee = state.users.find(u => u.id === userId);
+      const name = assignee ? assignee.name : 'Unknown';
+      await api.assignBug(bugId, userId, name);
+      await fetchBugs();
+      if (state.currentUser) await fetchNotifications(state.currentUser.id);
+    } catch (e) { console.error("Failed assignBug", e); }
+  }, [state.users, state.currentUser, fetchBugs, fetchNotifications]);
+
+  const addComment = useCallback(async (bugId: string, text: string) => {
+    if (!state.currentUser) return;
+    try {
+      await api.addBugComment(bugId, state.currentUser.id, state.currentUser.name, text);
+      await fetchBugs();
+    } catch (e) { console.error("Failed addComment", e); }
+  }, [state.currentUser, fetchBugs]);
+
+  const addAttachment = useCallback(async (bugId: string, attachmentData: Omit<Attachment, 'id' | 'createdAt'>) => {
+    try {
+      await api.addBugAttachment(bugId, attachmentData);
+      await fetchBugs();
+    } catch (e) { console.error("Failed addAttachment", e); }
+  }, [fetchBugs]);
 
   const addProject = useCallback(async (name: string, description: string, repoUrl?: string): Promise<Project | undefined> => {
     try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description, repoUrl })
-      });
-      if (res.ok) {
-        const project = await res.json();
-        setState(s => ({ ...s, projects: [project, ...s.projects] }));
+      const project = await api.createProject(name, description, repoUrl);
+      if (project) {
+        await fetchProjects();
         return project;
       }
     } catch (e) {
       console.error('Failed to add project', e);
     }
     return undefined;
-  }, []);
+  }, [fetchProjects]);
 
+  // Specialized notification proxy (currently bypasses API for UX speed where acceptable)
+  // System notifications (like AI events) still managed locally mostly for simplicity, 
+  // but could be sent to DB via a generic notifications router if needed. 
   const addNotification = useCallback((userId: string, message: string, type: Notification['type'], bugId?: string) => {
     const notif: Notification = {
       id: uuidv4(), userId, message, type, read: false, bugId,
@@ -455,14 +372,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, notifications: [...s.notifications, notif] }));
   }, []);
 
+  // Dedicated custom endpoint that runs deeply integrated semantic tests on server-side
   const analyzeProject = useCallback(async (id: string) => {
     try {
+      // Simulate real-time signaling while polling
       addNotification(state.currentUser?.id || 'sys', 'Code analysis started. This may take up to a minute...', 'system');
       const res = await fetch(`/api/projects/${id}/analyze`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         addNotification(state.currentUser?.id || 'sys', `Analysis complete! Found ${data.bugsFound} bugs.`, 'system');
-        await fetchBugs();
+        await fetchBugs(); // Sync newly generated automated bugs into dashboard
       } else {
         const data = await res.json();
         addNotification(state.currentUser?.id || 'sys', data.error || 'Analysis failed', 'system');
@@ -473,55 +392,93 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state.currentUser, addNotification, fetchBugs]);
 
-  const updateProject = useCallback((id: string, updates: Partial<Project>) => {
-    setState(s => ({
-      ...s,
-      projects: s.projects.map(p => p.id === id ? { ...p, ...updates } : p),
-    }));
-  }, []);
+  const updateProject = useCallback(async (id: string, updates: Partial<Project>) => {
+    try {
+      await api.updateProject(id, updates);
+      await fetchProjects();
+    } catch (e) { console.error("Failed updateProject", e); }
+  }, [fetchProjects]);
 
-  const deleteProject = useCallback((id: string) => {
-    setState(s => ({ ...s, projects: s.projects.filter(p => p.id !== id) }));
-  }, []);
+  const deleteProject = useCallback(async (id: string) => {
+    try {
+      await api.deleteProject(id);
+      await fetchProjects();
+    } catch (e) { console.error("Failed deleteProject", e); }
+  }, [fetchProjects]);
 
-  const updateUserRole = useCallback((userId: string, role: Role) => {
-    setState(s => ({
-      ...s,
-      users: s.users.map(u => u.id === userId ? { ...u, role } : u),
-    }));
-  }, []);
+  const updateUserRole = useCallback(async (userId: string, role: Role) => {
+    try {
+      await api.updateUserRole(userId, role);
+      await fetchUsers();
+    } catch (e) { console.error("Failed update role", e); }
+  }, [fetchUsers]);
 
-  const deleteUser = useCallback((userId: string) => {
-    setState(s => ({ ...s, users: s.users.filter(u => u.id !== userId) }));
-  }, []);
+  const deleteUser = useCallback(async (userId: string) => {
+    try {
+      await api.deleteUser(userId);
+      await fetchUsers();
+    } catch (e) { console.error("Failed delete user", e); }
+  }, [fetchUsers]);
 
-  const markNotificationRead = useCallback((id: string) => {
+  const markNotificationRead = useCallback(async (id: string) => {
+    try {
+      await api.markNotificationRead(id);
+      if (state.currentUser) await fetchNotifications(state.currentUser.id);
+    } catch (e) { console.error("Failed mark notif read", e); }
+    // Optimistic UI update: Assume success and clear notification visually immediately
     setState(s => ({
       ...s,
       notifications: s.notifications.map(n => n.id === id ? { ...n, read: true } : n),
     }));
-  }, []);
+  }, [state.currentUser, fetchNotifications]);
 
-  const markAllNotificationsRead = useCallback(() => {
+  const markAllNotificationsRead = useCallback(async () => {
+    if (state.currentUser) {
+      try {
+        await api.markAllNotificationsRead(state.currentUser.id);
+        await fetchNotifications(state.currentUser.id);
+      } catch (e) { console.error("Failed mark all read", e); }
+    }
+    // Optimistic UI update for bulk clear
     setState(s => ({
       ...s,
       notifications: s.notifications.map(n =>
         n.userId === s.currentUser?.id ? { ...n, read: true } : n
       ),
     }));
-  }, []);
+  }, [state.currentUser, fetchNotifications]);
 
   const setLanguage = useCallback((lang: Language) => {
-    setState(s => ({ ...s, language: lang }));
+    setState(s => ({ ...s, language: lang })); // Update active locale mapping
   }, []);
 
+  // Quick lookup utilities minimizing component logic
   const getBugById = useCallback((id: string) => state.bugs.find(b => b.id === id), [state.bugs]);
   const getUserById = useCallback((id: string) => state.users.find(u => u.id === id), [state.users]);
 
+  // Derived authorization property
   const isGuest = state.currentUser?.role === 'guest';
 
+  // Derived getters for contextual rendering (mostly used by Analytics dashboard)
+  const getMyAssignedBugs = useCallback((userId: string) => {
+    return state.bugs.filter(b => b.assigneeId === userId && b.status !== 'closed');
+  }, [state.bugs]);
+
+  const getBugsReportedByMe = useCallback((userId: string) => {
+    return state.bugs.filter(b => b.reporterId === userId);
+  }, [state.bugs]);
+
+  const getOpenBugsCount = useCallback(() => {
+    return state.bugs.filter(b => b.status === 'new' || b.status === 'open').length;
+  }, [state.bugs]);
+
+  const getCriticalBugsCount = useCallback(() => {
+    return state.bugs.filter(b => b.severity === 'critical' && b.status !== 'closed').length;
+  }, [state.bugs]);
+
+  // Wrap all state elements into the comprehensive object expected by AppContextType
   const value: AppContextType = {
-    ...state, login, loginAsGuest, register, verifyEmail, logout, resetPassword,
+    ...state, login, loginWithGoogle, loginAsGuest, register, verifyEmail, logout, resetPassword,
     addBug, updateBug, changeBugStatus,
     assignBug, addComment, addAttachment, addProject, updateProject, deleteProject,
     fetchProjects, fetchBugs, analyzeProject,
