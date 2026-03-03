@@ -75,12 +75,22 @@ router.put('/:id', async (req: Request, res: Response) => {
     try {
         const db = await getDb();
 
+        // Allowed columns to prevent SQL injection in dynamic query builder
+        const allowedColumns = [
+            'title', 'description', 'stepsToReproduce', 'expectedBehavior',
+            'actualBehavior', 'severity', 'predictedSeverity', 'severityConfidence',
+            'publicImpact', 'status', 'projectId', 'reporterId', 'reporterName',
+            'assigneeId', 'assigneeName', 'fileLocation', 'aiAnalyzed'
+        ];
+
         // Dynamic update query builder
         const setClauses: string[] = [];
         const values: any[] = [];
         for (const [key, value] of Object.entries(updates)) {
-            // Ignore relations or read-only fields
+            // Ignore relations or read-only fields, and enforce strict column whitelist
             if (['id', 'createdAt', 'comments', 'statusHistory', 'attachments', 'tags'].includes(key)) continue;
+            if (!allowedColumns.includes(key)) continue; // Defense in depth: ignore unknown columns
+
             setClauses.push(`${key} = ?`);
             values.push(value);
         }
